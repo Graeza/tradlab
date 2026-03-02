@@ -15,7 +15,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 from collections import deque
 
-from core.mt5_init import initialize_mt5
+from core.mt5_worker import MT5Client
 from core.data_fetcher import DataFetcher
 from core.database import MarketDatabase
 from core.data_pipeline import DataPipeline
@@ -586,12 +586,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pos_timer.timeout.connect(self.refresh_performance)
         self.pos_timer.start()
 
-        # --- Init MT5 and bot ---
-        initialize_mt5()
+        # --- Init MT5 (single-thread worker) and bot ---
+        self.mt5 = MT5Client()
+        self.mt5.start()
         self.lbl_status.setText("MT5 connected")
 
         self.db = MarketDatabase(DB_PATH)
-        self.fetcher = DataFetcher()
+        self.fetcher = DataFetcher(self.mt5)
         self.pipeline = DataPipeline(self.fetcher, self.db)
 
         strategies = self._build_strategies()
@@ -601,8 +602,8 @@ class MainWindow(QtWidgets.QMainWindow):
             min_conf=ENSEMBLE_MIN_CONF,
             regime_multipliers=REGIME_WEIGHT_MULTIPLIERS,
         )
-        self.risk = RiskManager()
-        self.executor = TradeExecutor()
+        self.risk = RiskManager(self.mt5, )
+        self.executor = TradeExecutor(self.mt5, )
 
         # Sync UI defaults with live objects
         self._sync_risk_ui_from_live()
@@ -1101,7 +1102,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_positions(self):
-        pos = list_positions()
+        pos = list_positions(self.mt5, self.mt5)
 
         self.tbl.setUpdatesEnabled(False)
         self.tbl.setRowCount(0)
@@ -1164,7 +1165,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def close_mode(self, mode: str):
         self.log.write(f"[UI] Closing positions: {mode}")
-        summary = close_positions(mode=mode)
+        summary = close_positions(self.mt5, self.mt5, mode=mode)
         for m in summary.get("closed", []):
             self.log.write("[CLOSE] " + m)
         for m in summary.get("failed", []):
@@ -1187,7 +1188,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_portfolio(self):
-        s = get_account_summary()
+        s = get_account_summary(self.mt5)
         if not s.get("ok"):
             err = s.get("error")
             self.lbl_account.setText(f"Account: ERROR - {err}")
@@ -1316,6 +1317,23 @@ class MainWindow(QtWidgets.QMainWindow):
             ]
             for c, v in enumerate(vals):
                 self.tbl_perf.setItem(r, c, QtWidgets.QTableWidgetItem(v))
+
+
+    def closeEvent(self, event):
+        # Ensure background bot + MT5 worker are stopped cleanly on exit.
+        try:
+            try:
+                if getattr(self, "bot", None) is not None:
+                    self.bot.stop()
+            except Exception:
+                pass
+            try:
+                if getattr(self, "mt5", None) is not None:
+                    self.mt5.shutdown()
+            except Exception:
+                pass
+        finally:
+            super().closeEvent(event)
 
 
 def main():

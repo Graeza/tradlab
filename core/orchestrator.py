@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import time
 import threading
 from typing import Callable, Optional, Any
+
 from core.data_pipeline import DataPipeline
 from core.ensemble import EnsembleEngine
 from core.database import MarketDatabase
@@ -9,10 +11,23 @@ from core.performance_tracker import PerformanceTracker
 from core.labeling import make_labels_from_bars
 from utils.regime import detect_regime
 
+
 class Orchestrator:
-    def __init__(self, pipeline: DataPipeline, ensemble: EnsembleEngine, risk_manager, executor, db: MarketDatabase,
-                 symbols: list[str], timeframes: list[int], primary_tf: int, label_horizon_bars: int,
-                 log: Optional[Callable[[str], None]] = None, allow_new_trades_getter: Optional[Callable[[], bool]] = None, decision_callback: Optional[Callable[[str, dict, list], None]] = None):
+    def __init__(
+        self,
+        pipeline: DataPipeline,
+        ensemble: EnsembleEngine,
+        risk_manager,
+        executor,
+        db: MarketDatabase,
+        symbols: list[str],
+        timeframes: list[int],
+        primary_tf: int,
+        label_horizon_bars: int,
+        log: Optional[Callable[[str], None]] = None,
+        allow_new_trades_getter: Optional[Callable[[], bool]] = None,
+        decision_callback: Optional[Callable[[str, dict, list], None]] = None,
+    ):
         self.pipeline = pipeline
         self.ensemble = ensemble
         self.risk = risk_manager
@@ -28,6 +43,13 @@ class Orchestrator:
         self.perf = PerformanceTracker()
 
     def run_forever(self, sleep_s: int = 300, stop_event: Optional[threading.Event] = None):
+        """Main loop.
+
+        Fixes:
+        - Remove duplicated SAFETY SWITCH / assess block.
+        - Ensure primary timeframe presence check is correct.
+        - Keep control flow clean: decide -> (optional) execute.
+        """
         stop_event = stop_event or threading.Event()
         self.log("[BOT] Started")
 
@@ -35,18 +57,24 @@ class Orchestrator:
             for symbol in self.symbols:
                 if stop_event.is_set():
                     break
+
                 try:
                     data_by_tf = self.pipeline.update_symbol(symbol, self.timeframes)
-
-                    primary_df = data_by_tf.get(self.primary_tf)
-                    regime = detect_regime(primary_df) if primary_df is not None else {"trend":"UNKNOWN","vol":"UNKNOWN"}
 
                     if self.primary_tf not in data_by_tf:
                         self.log(f"[WARN] {symbol}: no primary timeframe data")
                         continue
 
-                    final_signal, outputs = self.ensemble.run(data_by_tf, regime=regime)
                     primary_df = data_by_tf.get(self.primary_tf)
+                    regime = detect_regime(primary_df) if primary_df is not None else {"trend": "UNKNOWN", "vol": "UNKNOWN"}
+
+                    final_signal, outputs = self.ensemble.run(data_by_tf, regime=regime)
+
+                    # attach regime for downstream components
+                    if isinstance(final_signal, dict):
+                        final_signal["regime"] = regime
+
+                    # Performance tracking (non-blocking metadata)
                     self.perf.add_prediction(
                         symbol=symbol,
                         df_primary=primary_df,
@@ -54,12 +82,7 @@ class Orchestrator:
                         final=final_signal,
                         outputs=outputs,
                     )
-
-                    # try to resolve older predictions now that we have more bars
                     self.perf.update_with_bars(symbol, primary_df)
-                    
-                    if isinstance(final_signal, dict):
-                        final_signal["regime"] = regime
 
                     # Emit structured decision event (GUI can subscribe)
                     if self.decision_callback:
@@ -67,7 +90,10 @@ class Orchestrator:
                             self.decision_callback(symbol, final_signal, outputs)
                         except Exception as e:
                             self.log(f"[WARN] decision_callback failed: {e}")
-                    self.log(f"[SIGNAL] {symbol}: {final_signal} | details={[(o.get('name'), o.get('signal'), o.get('confidence')) for o in outputs]}")
+
+                    self.log(
+                        f"[SIGNAL] {symbol}: {final_signal} | details={[(o.get('name'), o.get('signal'), o.get('confidence')) for o in outputs]}"
+                    )
 
                     # Delayed labeling (primary timeframe)
                     bars = self.db.load_bars(symbol, self.primary_tf, limit=5000)
@@ -89,14 +115,6 @@ class Orchestrator:
                     res = self.executor.execute(trade_params)
                     self.log(f"[EXEC] {symbol}: {res}")
 
-
-                    # SAFETY SWITCH: block ONLY new trades
-                    if not self.allow_new_trades_getter():
-                        self.log(f"[SAFE MODE] Entries blocked. Would have acted on {symbol}: {final_signal}")
-                        continue
-
-                    trade_params = self.risk.assess(final_signal, symbol)
-                    
                 except Exception as e:
                     self.log(f"[ERROR] {symbol}: {e}")
 

@@ -1,13 +1,11 @@
 """Risk management and position sizing.
 
-This module keeps policy in one place:
+Policy:
 - Whether a signal is tradable (confidence / spread gating)
 - How big the trade should be (risk-based sizing)
 - Where SL/TP should go (volatility-based distance)
 
-NOTE: This implementation uses MetaTrader5 account + symbol metadata.
-If you later isolate MT5 calls to a single thread, you can pass
-market/account snapshots into `assess()` instead.
+All MT5 calls are serialized via MT5Client to keep MT5 single-threaded.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-import MetaTrader5 as mt5
+from core.mt5_worker import MT5Client
 
 
 @dataclass(frozen=True)
@@ -41,6 +39,7 @@ class RiskDecision:
 class RiskManager:
     def __init__(
         self,
+        mt5: MT5Client,
         max_risk_pct: float = 1.0,
         min_confidence: float = 0.60,
         sl_atr_mult: float = 2.0,
@@ -49,17 +48,7 @@ class RiskManager:
         max_spread_points: int = 50,
         base_deviation_points: int = 20,
     ):
-        """Create a risk manager.
-
-        Args:
-            max_risk_pct: % of equity to risk per trade (e.g. 1.0 => 1%).
-            min_confidence: minimum final signal confidence to allow entry.
-            sl_atr_mult: SL distance multiplier applied to ATR% proxy.
-            tp_rr: take-profit distance as SL_distance * tp_rr.
-            fallback_sl_pct: if no ATR% available, use this % of price as SL distance.
-            max_spread_points: reject trades if spread exceeds this many points.
-            base_deviation_points: default slippage tolerance in points.
-        """
+        self.mt5 = mt5
         self.max_risk_pct = float(max_risk_pct)
         self.min_confidence = float(min_confidence)
         self.sl_atr_mult = float(sl_atr_mult)
@@ -68,24 +57,19 @@ class RiskManager:
         self.max_spread_points = int(max_spread_points)
         self.base_deviation_points = int(base_deviation_points)
 
-    @staticmethod
-    def _equity() -> Optional[float]:
-        acc = mt5.account_info()
+    def _equity(self) -> Optional[float]:
+        acc = self.mt5.account_info()
         if acc is None:
             return None
         eq = getattr(acc, "equity", None)
         bal = getattr(acc, "balance", None)
         # Prefer equity (includes floating PnL); fallback to balance.
-        val = eq if (eq is not None and eq > 0) else bal
-        return float(val) if (val is not None and val > 0) else None
+        val = eq if (eq is not None and float(eq) > 0) else bal
+        return float(val) if (val is not None and float(val) > 0) else None
 
     @staticmethod
     def _money_per_lot_for_move(symbol_info, price_delta: float) -> float:
-        """Approx loss for 1.0 lot if price moves by `price_delta`.
-
-        Uses MT5 symbol metadata:
-          money = (price_delta / tick_size) * tick_value
-        """
+        """Approx loss for 1.0 lot if price moves by `price_delta`."""
         tick_size = float(getattr(symbol_info, "trade_tick_size", 0.0) or 0.0)
         tick_value = float(getattr(symbol_info, "trade_tick_value", 0.0) or 0.0)
         if tick_size <= 0:
@@ -109,10 +93,10 @@ class RiskManager:
             return None
 
         # Make sure symbol is available/visible in MT5
-        mt5.symbol_select(symbol, True)
+        self.mt5.symbol_select(symbol, True)
 
-        info = mt5.symbol_info(symbol)
-        tick = mt5.symbol_info_tick(symbol)
+        info = self.mt5.symbol_info(symbol)
+        tick = self.mt5.symbol_info_tick(symbol)
         eq = self._equity()
         if info is None or tick is None or eq is None:
             return None
@@ -128,10 +112,8 @@ class RiskManager:
         if point > 0 and spread_points > self.max_spread_points:
             return None
 
-        # Entry reference price
         entry_price = ask if action == "BUY" else bid
 
-        # Volatility-based SL distance
         regime = signal.get("regime") if isinstance(signal.get("regime"), dict) else {}
         atr_pct = float(regime.get("atr_pct") or 0.0)
         if atr_pct > 0:
@@ -151,7 +133,6 @@ class RiskManager:
             sl = entry_price + sl_dist
             tp = entry_price - sl_dist * self.tp_rr
 
-        # Risk-based sizing
         risk_money = eq * (self.max_risk_pct / 100.0)
         per_lot_loss = self._money_per_lot_for_move(info, sl_dist)
         if per_lot_loss <= 0:
@@ -161,7 +142,6 @@ class RiskManager:
         if raw_lot <= 0:
             return None
 
-        # Deviation: base + a bit of spread buffer
         deviation = max(self.base_deviation_points, int(self.base_deviation_points + spread_points))
 
         decision = RiskDecision(
