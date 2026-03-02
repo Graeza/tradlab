@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+from backtest.broker import SimBroker
+from backtest.risk import BacktestRiskManager
+from backtest.metrics import compute_metrics, BacktestMetrics
+from utils.regime import detect_regime
+from core.features import build_features
+from core.ensemble import EnsembleEngine
+
+
+@dataclass(frozen=True)
+class BacktestResult:
+    equity_curve: pd.DataFrame
+    fills: pd.DataFrame
+    metrics: BacktestMetrics
+
+
+def _precompute_features(bars_by_tf: Dict[int, pd.DataFrame]) -> Dict[int, pd.DataFrame]:
+    feats_by_tf: Dict[int, pd.DataFrame] = {}
+    for tf, bars in bars_by_tf.items():
+        if bars is None or bars.empty:
+            feats_by_tf[tf] = pd.DataFrame()
+            continue
+        feats = build_features(bars)
+        # keep dt if present for debugging but strategies typically ignore it
+        feats_by_tf[tf] = feats.reset_index(drop=True)
+    return feats_by_tf
+
+
+def _slice_up_to_time(df: pd.DataFrame, time_s: int) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df[df["time"] <= int(time_s)].copy()
+
+
+def run_backtest_next_open(
+    *,
+    symbol: str,
+    bars_by_tf: Dict[int, pd.DataFrame],
+    timeframes: list[int],
+    primary_tf: int,
+    ensemble: EnsembleEngine,
+    risk: Optional[BacktestRiskManager] = None,
+    broker: Optional[SimBroker] = None,
+    warmup_bars: int = 200,
+    tag: str = "mvp",
+) -> BacktestResult:
+    """Bar-close decision, next-bar-open execution backtest."""
+    risk = risk or BacktestRiskManager()
+    broker = broker or SimBroker()
+
+    primary_bars = bars_by_tf.get(primary_tf)
+    if primary_bars is None or primary_bars.empty:
+        raise ValueError(f"No primary bars for tf={primary_tf}")
+
+    feats_by_tf = _precompute_features({tf: bars_by_tf.get(tf, pd.DataFrame()) for tf in timeframes})
+
+    # Index safety: we need i+1 open for next-open fills
+    n = len(primary_bars)
+    start_i = max(warmup_bars, 1)
+    end_i = n - 2
+    if end_i <= start_i:
+        raise ValueError("Not enough bars for backtest after warmup")
+
+    for i in range(start_i, end_i + 1):
+        t = int(primary_bars.loc[i, "time"])
+        next_open = float(primary_bars.loc[i + 1, "open"])
+
+        # Build data_by_tf as features up to time t
+        data_by_tf: Dict[int, pd.DataFrame] = {}
+        for tf in timeframes:
+            df = feats_by_tf.get(tf)
+            data_by_tf[tf] = _slice_up_to_time(df, t)
+
+        primary_df = data_by_tf.get(primary_tf, pd.DataFrame())
+        regime = detect_regime(primary_df) if primary_df is not None and not primary_df.empty else {"trend": "UNKNOWN", "vol": "UNKNOWN"}
+
+        # 1) apply any queued order at current bar open (fills happen at open)
+        # We execute orders queued from the previous bar close.
+        broker.on_bar_open(time_s=t, symbol=symbol, open_price=float(primary_bars.loc[i, "open"]))
+
+        # 2) compute decision at bar close (time t)
+        final_signal, outputs = ensemble.run(data_by_tf, regime=regime)
+        if isinstance(final_signal, dict):
+            final_signal["regime"] = regime
+
+        # 3) queue next-open order based on final_signal (filled at next bar open)
+        params = risk.assess(
+            signal=final_signal,
+            equity=broker.equity,
+            entry_price=next_open,
+            regime=regime,
+        )
+        if params is not None:
+            broker.queue_order(symbol=symbol, side=str(final_signal.get("signal")), qty=params.qty, sl=params.sl, tp=params.tp)
+
+        # 4) update broker on bar (SL/TP intrabar + mark-to-market)
+        broker.on_bar(
+            time_s=t,
+            symbol=symbol,
+            high=float(primary_bars.loc[i, "high"]),
+            low=float(primary_bars.loc[i, "low"]),
+            close=float(primary_bars.loc[i, "close"]),
+        )
+
+    equity_curve = pd.DataFrame(broker.equity_curve)
+    fills = pd.DataFrame([f.__dict__ for f in broker.fills])
+    metrics = compute_metrics(equity_curve, fills)
+    return BacktestResult(equity_curve=equity_curve, fills=fills, metrics=metrics)
