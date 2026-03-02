@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 
+from strategies.base import StrategyOutput
+
 
 def _direction_from_return(r: float, eps: float = 0.0) -> str:
     if r > eps:
@@ -19,7 +21,7 @@ class PendingPrediction:
     close: float
     horizon_bars: int
     final: Dict[str, Any]
-    outputs: List[Dict[str, Any]]  # StrategyOutput list
+    outputs: List[StrategyOutput]  # StrategyOutput list
     regime: Dict[str, Any]
 
 
@@ -50,7 +52,7 @@ class PerformanceTracker:
         df_primary: pd.DataFrame,
         horizon_bars: int,
         final: Dict[str, Any],
-        outputs: List[Dict[str, Any]],
+        outputs: List[StrategyOutput],
     ) -> None:
         if df_primary is None or df_primary.empty:
             return

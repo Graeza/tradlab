@@ -44,6 +44,8 @@ def build_strategies():
                             strict_schema=bundle.get("strict_schema", True),
                             class_to_signal=bundle.get("class_to_signal"),
                             fillna_value=bundle.get("fillna_value"),
+                            feature_set_version=bundle.get("feature_set_version"),
+                            feature_set_id=bundle.get("feature_set_id"),
                         )
                 )
             else:

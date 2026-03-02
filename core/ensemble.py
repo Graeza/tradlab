@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Tuple, Optional, Dict, Any
 import pandas as pd
 
-from strategies.base import Strategy, StrategyOutput
+from strategies.base import Strategy, StrategyOutput, StrategyResult, Signal
 
 
 class EnsembleEngine:
@@ -52,26 +52,45 @@ class EnsembleEngine:
         total = 0.0
 
         for s in self.strategies:
-            out = s.evaluate(data_by_tf) or {}
-            # ensure name is consistent
-            name = str(out.get("name") or getattr(s, "name", s.__class__.__name__))
+            # Optional regime gating at the strategy level
+            try:
+                active = True if not hasattr(s, "is_active") else bool(s.is_active(regime))
+            except Exception:
+                active = True
 
-            sig = str(out.get("signal") or "HOLD").upper()
-            conf = float(out.get("confidence") or 0.0)
+            if not active:
+                name = str(getattr(s, "name", s.__class__.__name__))
+                base_w, trend_mult, vol_mult, w = self._effective_weight(name, regime)
+                meta = {
+                    "reason": "regime_filtered",
+                    "regime": dict(regime or {}),
+                    "base_weight": base_w,
+                    "trend_mult": trend_mult,
+                    "vol_mult": vol_mult,
+                    "effective_weight": w,
+                }
+                outputs.append(StrategyResult(name=name, signal=Signal.HOLD, confidence=0.0, meta=meta).to_dict())
+                continue
+
+            res = s.evaluate(data_by_tf)
+            name = str(res.name or getattr(s, "name", s.__class__.__name__))
+
+            sig = res.signal.value
+            conf = float(res.confidence)
 
             base_w, trend_mult, vol_mult, w = self._effective_weight(name, regime)
 
             # attach useful debug info for your Strategy Debug Panel
-            meta = dict(out.get("meta") or {})
+            meta = dict(res.meta or {})
             meta.update({
+                "regime": dict(regime or {}),
                 "base_weight": base_w,
                 "trend_mult": trend_mult,
                 "vol_mult": vol_mult,
                 "effective_weight": w,
             })
-            out["meta"] = meta
-            out["name"] = name
 
+            out = StrategyResult(name=name, signal=Signal(sig), confidence=conf, meta=meta).to_dict()
             outputs.append(out)
 
             if sig == "HOLD" or conf < self.min_conf:
@@ -80,6 +99,7 @@ class EnsembleEngine:
             x = 1.0 if sig == "BUY" else -1.0
             score += w * conf * x
             total += w * conf
+
 
         if total == 0.0:
             final = {"signal": "HOLD", "confidence": 0.0}

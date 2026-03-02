@@ -2,8 +2,29 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+import hashlib
+
+from config.settings import FEATURE_SET_VERSION
 from utils.indicators import calculate_rsi, calculate_ema, calculate_macd, analyze_positive_candles
 from utils.encoding import encode_signal
+
+
+def _feature_set_id(cols: list[str]) -> str:
+    payload = "\n".join([str(c) for c in cols]).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def attach_feature_version(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach feature_set_version + feature_set_id columns.
+
+    feature_set_id is a short hash of the dataframe column order (excluding dt).
+    """
+    cols = [c for c in df.columns if c != "dt"]
+    df = df.copy()
+    df["feature_set_version"] = int(FEATURE_SET_VERSION)
+    df["feature_set_id"] = _feature_set_id(cols)
+    return df
+
 
 def build_features(bars: pd.DataFrame) -> pd.DataFrame:
     """Build feature dataframe from raw bars.
@@ -26,4 +47,7 @@ def build_features(bars: pd.DataFrame) -> pd.DataFrame:
 
     # Clean infinities
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    # Feature versioning metadata
+    df = attach_feature_version(df)
     return df

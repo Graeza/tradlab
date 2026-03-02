@@ -23,9 +23,17 @@ LOOP_SLEEP_SECONDS = 300
 # --- DB ---
 DB_PATH = "market_data.db"
 
+# --- Feature versioning ---
+# Bump this integer whenever you change the feature engineering pipeline (add/remove/rename columns).
+FEATURE_SET_VERSION = 1
+
 # --- ML ---
 USE_ML_STRATEGY = True
 ML_MODEL_PATH = "models/ml_strategy.joblib"
+
+# --- ML Experiment tracking ---
+# Training script appends one JSON line per run.
+EXPERIMENT_LOG_PATH = "ml/experiments/experiments.jsonl"
 
 # --- Ensemble ---
 ENSEMBLE_MIN_CONF = 0.55

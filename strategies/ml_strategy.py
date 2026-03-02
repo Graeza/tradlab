@@ -6,9 +6,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
-from strategies.base import Strategy
-
-
+from strategies.base import Strategy, StrategyResult, Signal
 class MLStrategy(Strategy):
     name = "ML"
 
@@ -23,6 +21,8 @@ class MLStrategy(Strategy):
         class_to_signal: dict[object, str] | None = None,
         drop_cols: list[str] | None = None,
         fillna_value: float | None = None,
+        feature_set_version: int | None = None,
+        feature_set_id: str | None = None,
     ):
         """ML-backed strategy with feature-schema enforcement.
 
@@ -64,6 +64,8 @@ class MLStrategy(Strategy):
         self.class_to_signal = class_to_signal
         self.drop_cols = set((drop_cols or []))
         self.fillna_value = fillna_value
+        self.feature_set_version = int(feature_set_version) if feature_set_version is not None else None
+        self.feature_set_id = str(feature_set_id) if feature_set_id is not None else None
 
         # Expected schema (if we can resolve it now)
         self._expected_cols: list[str] | None = None
@@ -92,6 +94,7 @@ class MLStrategy(Strategy):
             "time", "dt", "datetime", "timestamp",
             "symbol", "tf", "timeframe",
             "label", "target", "y",
+            "feature_set_version", "feature_set_id",
         } | set(self.drop_cols)
 
     def _infer_live_feature_cols(self, df: pd.DataFrame) -> list[str]:
@@ -148,10 +151,70 @@ class MLStrategy(Strategy):
 
         return {}
 
-    def evaluate(self, data_by_tf: dict[int, pd.DataFrame]):
+    def _evaluate(self, data_by_tf: dict[int, pd.DataFrame]):
         df = next(iter(data_by_tf.values()))
         if df is None or df.empty:
             return {"name": self.name, "signal": "HOLD", "confidence": 0.0, "meta": {"reason": "no_data"}}
+
+        # --- Feature set version gating (optional but recommended) ---
+        if self.feature_set_version is not None:
+            if "feature_set_version" not in df.columns:
+                return {
+                    "name": self.name,
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "meta": {
+                        "reason": "missing_feature_set_version",
+                        "expected_feature_set_version": self.feature_set_version,
+                        "schema_version": self.schema_version,
+                        "model_version": self.model_version,
+                    },
+                }
+            try:
+                live_v = int(df["feature_set_version"].iloc[-1])
+            except Exception:
+                live_v = None
+            if live_v != self.feature_set_version:
+                return {
+                    "name": self.name,
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "meta": {
+                        "reason": "feature_set_version_mismatch",
+                        "expected_feature_set_version": self.feature_set_version,
+                        "live_feature_set_version": live_v,
+                        "schema_version": self.schema_version,
+                        "model_version": self.model_version,
+                    },
+                }
+
+        if self.feature_set_id is not None:
+            if "feature_set_id" not in df.columns:
+                return {
+                    "name": self.name,
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "meta": {
+                        "reason": "missing_feature_set_id",
+                        "expected_feature_set_id": self.feature_set_id,
+                        "schema_version": self.schema_version,
+                        "model_version": self.model_version,
+                    },
+                }
+            live_id = str(df["feature_set_id"].iloc[-1])
+            if live_id != self.feature_set_id:
+                return {
+                    "name": self.name,
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "meta": {
+                        "reason": "feature_set_id_mismatch",
+                        "expected_feature_set_id": self.feature_set_id,
+                        "live_feature_set_id": live_id,
+                        "schema_version": self.schema_version,
+                        "model_version": self.model_version,
+                    },
+                }
 
         live_cols = self._infer_live_feature_cols(df)
         live_schema_id = self._schema_id(live_cols)

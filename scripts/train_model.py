@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
@@ -11,7 +12,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-from config.settings import ML_MODEL_PATH
+from config.settings import ML_MODEL_PATH, EXPERIMENT_LOG_PATH
+
+from ml.experiment_tracker import append_jsonl, build_run_record
 
 
 NON_FEATURE_COLS_DEFAULT = {
@@ -19,6 +22,7 @@ NON_FEATURE_COLS_DEFAULT = {
     "symbol", "timeframe", "tf",
     "label", "y", "target",
     "future_return", "y_class",
+    "feature_set_version", "feature_set_id",
 }
 
 
@@ -71,6 +75,23 @@ def main() -> None:
         raise SystemExit(f"CSV not found: {csv_path.resolve()}")
 
     df = pd.read_csv(csv_path)
+
+    # --- Feature set versioning metadata (optional but recommended) ---
+    feature_set_version = None
+    feature_set_id = None
+    if "feature_set_version" in df.columns:
+        # Enforce single feature version within a training dataset
+        uniq = pd.unique(df["feature_set_version"].dropna())
+        if len(uniq) == 1:
+            feature_set_version = int(uniq[0])
+        elif len(uniq) > 1:
+            raise SystemExit(f"Multiple feature_set_version values in dataset: {list(map(int, uniq[:10]))} ...")
+    if "feature_set_id" in df.columns:
+        uniq = pd.unique(df["feature_set_id"].dropna())
+        if len(uniq) == 1:
+            feature_set_id = str(uniq[0])
+        elif len(uniq) > 1:
+            raise SystemExit(f"Multiple feature_set_id values in dataset: {list(uniq[:5])} ...")
 
     if args.label_col not in df.columns:
         raise SystemExit(f"Label column '{args.label_col}' not found in CSV. Columns: {list(df.columns)[:20]}...")
@@ -147,6 +168,8 @@ def main() -> None:
         "feature_cols": feature_cols,  # exact list in training order
         "model_version": model_version,
         "schema_version": int(args.schema_version),
+        "feature_set_version": feature_set_version,
+        "feature_set_id": feature_set_id,
         "strict_schema": bool(args.strict_schema),
         "class_to_signal": class_to_signal,
         "fillna_value": fillna_value,  # None means: do not fill in live; reject NaN/inf instead
@@ -159,6 +182,44 @@ def main() -> None:
     out_path = Path(args.model_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, out_path)
+
+    # --- Experiment tracking (JSONL) ---
+    try:
+        run = build_run_record(
+            model_type="RandomForestClassifier",
+            model_version=model_version,
+            dataset_path=str(csv_path),
+            n_rows=int(len(df)),
+            n_features=int(len(feature_cols)),
+            feature_cols=list(feature_cols),
+            label_col=str(args.label_col),
+            feature_set_version=feature_set_version,
+            feature_set_id=feature_set_id,
+            output_model_path=str(out_path),
+            utc_ts=datetime.now(timezone.utc).isoformat(),
+            params={
+                "test_frac": float(args.test_frac),
+                "random_state": int(args.random_state),
+                "n_estimators": int(args.n_estimators),
+                "max_depth": int(args.max_depth),
+                "schema_version": int(args.schema_version),
+                "strict_schema": bool(args.strict_schema),
+                "fillna_value": fillna_value,
+                "non_feature_cols_extra": str(args.non_feature_cols),
+                "class_to_signal": class_to_signal,
+            },
+            metrics={
+                "accuracy": float(acc),
+                "confusion_matrix": cm.tolist(),
+                "report": report,
+                "train_rows": int(len(X_train)),
+                "test_rows": int(len(X_test)),
+            },
+        )
+        append_jsonl(EXPERIMENT_LOG_PATH, run)
+        print(f"[EXPERIMENT] logged -> {Path(EXPERIMENT_LOG_PATH).resolve()}")
+    except Exception as e:
+        print(f"[WARN] experiment logging failed: {e}")
 
     print("=== Saved ===")
     print(f"Bundle -> {out_path.resolve()}")

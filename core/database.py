@@ -34,6 +34,8 @@ class MarketDatabase:
                 symbol TEXT NOT NULL,
                 timeframe INTEGER NOT NULL,
                 time INTEGER NOT NULL,
+                feature_set_version INTEGER,
+                feature_set_id TEXT,
                 -- dynamic feature columns are stored here via ALTER TABLE when needed
                 PRIMARY KEY (symbol, timeframe, time)
             );
@@ -49,7 +51,18 @@ class MarketDatabase:
                 PRIMARY KEY (symbol, timeframe, time, horizon_bars)
             );
         """)
+        self.ensure_feature_meta_columns()
         self.conn.commit()
+
+
+    def ensure_feature_meta_columns(self) -> None:
+        """Add feature_set_version/feature_set_id columns for older DBs."""
+        cur = self.conn.execute("PRAGMA table_info(features);")
+        existing = {row[1] for row in cur.fetchall()}
+        if "feature_set_version" not in existing:
+            self.conn.execute("ALTER TABLE features ADD COLUMN feature_set_version INTEGER;")
+        if "feature_set_id" not in existing:
+            self.conn.execute("ALTER TABLE features ADD COLUMN feature_set_id TEXT;")
 
     # -------- Bars --------
     def get_last_bar_time(self, symbol: str, timeframe: int) -> int | None:
@@ -120,7 +133,12 @@ class MarketDatabase:
             if c in ("symbol","timeframe","time"):
                 continue
             if c not in existing:
-                self.conn.execute(f"ALTER TABLE features ADD COLUMN '{c}' REAL;")
+                col_type = "REAL"
+                if c == "feature_set_version":
+                    col_type = "INTEGER"
+                elif c == "feature_set_id":
+                    col_type = "TEXT"
+                self.conn.execute(f"ALTER TABLE features ADD COLUMN '{c}' {col_type};")
         self.conn.commit()
 
     def upsert_features(self, df: pd.DataFrame, symbol: str, timeframe: int) -> int:
