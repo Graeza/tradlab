@@ -72,7 +72,6 @@ class TrainWorker(QtCore.QObject):
         except Exception as e:
             self.finished.emit(False, f"Training error: {e}")
 
-
 class BacktestWorker(QtCore.QObject):
     line = QtCore.Signal(str)
     finished = QtCore.Signal(bool, str)  # (ok, message)
@@ -105,7 +104,6 @@ class BacktestWorker(QtCore.QObject):
         except Exception as e:
             self.finished.emit(False, f"Backtest error: {e}")
 
-
 class LogPump(QtCore.QObject):
     line = QtCore.Signal(str)
 
@@ -122,7 +120,6 @@ class LogPump(QtCore.QObject):
     def flush(self):
         while not self.q.empty():
             self.line.emit(self.q.get())
-
 
 class DecisionBus(QtCore.QObject):
     decision = QtCore.Signal(dict)  # payload dict
@@ -204,7 +201,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl = QtWidgets.QTableWidget(0, 6)
         self.tbl.setHorizontalHeaderLabels(["Ticket", "Symbol", "Type", "Volume", "Open Price", "Profit"])
-        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.resizeToContents)
         pos_layout.addWidget(self.tbl)
 
         self.lbl_totals = QtWidgets.QLabel("Totals: —")
@@ -1161,7 +1158,6 @@ class MainWindow(QtWidgets.QMainWindow):
             f"Positions: {len(pos)} | Winners: {winners} | Losers: {losers} | "
             f"<span style='color:{color};'>Floating PnL: {total_profit:.2f}</span>"
         )
-        self.lbl_status.setText(f"Open positions: {len(pos)}")
 
     def close_mode(self, mode: str):
         self.log.write(f"[UI] Closing positions: {mode}")
@@ -1318,7 +1314,6 @@ class MainWindow(QtWidgets.QMainWindow):
             for c, v in enumerate(vals):
                 self.tbl_perf.setItem(r, c, QtWidgets.QTableWidgetItem(v))
 
-
     def closeEvent(self, event):
         # Ensure background bot + MT5 worker are stopped cleanly on exit.
         try:
@@ -1335,13 +1330,11 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             super().closeEvent(event)
 
-
 def main():
     app = QtWidgets.QApplication(sys.argv)
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()
