@@ -49,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--class-to-signal",
         default='{"-1":"SELL","0":"HOLD","1":"BUY"}',
-        help='JSON mapping from class to signal, e.g. '{"0":"SELL","1":"BUY"}'',
+        help="JSON mapping from class to signal, e.g. '{\"0\":\"SELL\",\"1\":\"BUY\"}'",
     )
     return p.parse_args()
 

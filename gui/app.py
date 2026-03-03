@@ -201,7 +201,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl = QtWidgets.QTableWidget(0, 6)
         self.tbl.setHorizontalHeaderLabels(["Ticket", "Symbol", "Type", "Volume", "Open Price", "Profit"])
-        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.resizeToContents)
+        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         pos_layout.addWidget(self.tbl)
 
         self.lbl_totals = QtWidgets.QLabel("Totals: —")
