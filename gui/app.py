@@ -1047,16 +1047,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def reconnect_mt5(self):
+        """Best-effort reconnect without touching MT5 from the GUI thread.
+
+        MT5 calls must go through MT5Client (worker thread).
+        """
         try:
-            initialize_mt5()
+            ok = self.mt5.initialize(login=self.mt5.login, server=self.mt5.server, password=self.mt5.password)
+            if not ok:
+                raise RuntimeError(f"MT5 initialize() failed: {self.mt5.last_error()}")
             self.log.write("[MT5] Reconnect requested")
             self.refresh_portfolio()
         except Exception as e:
             self.log.write(f"[MT5] Reconnect failed: {e}")
 
-    # ---------- Risk / execution guard ----------
-
-    @QtCore.Slot()
     def apply_risk_settings(self):
         try:
             self.risk.max_risk_pct = float(self.risk_max_risk_pct.value())
@@ -1296,9 +1299,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_performance(self):
-        snap = self.orch.perf.snapshot()
-        rows = snap.get("rows") or []
-        pending_total = int(snap.get("pending_total") or 0)
+        rows = self.orch.perf.summary_rows()
+        pending_total = sum(len(v) for v in self.orch.perf.pending.values())
         self.lbl_perf_status.setText(f"Performance: {len(rows)} strategies | pending={pending_total}")
 
         self.tbl_perf.setRowCount(0)
@@ -1309,7 +1311,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 str(row.get("name")),
                 str(row.get("n")),
                 f"{float(row.get('win_rate', 0.0) or 0.0) * 100.0:.1f}%",
-                f"{float(row.get('avg_ret', 0.0) or 0.0):.5f}",
+                f"{float(row.get('avg_return', 0.0) or 0.0):.5f}",
                 f"{float(row.get('expectancy', 0.0) or 0.0):.5f}",
             ]
             for c, v in enumerate(vals):
