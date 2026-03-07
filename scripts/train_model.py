@@ -138,6 +138,26 @@ def main() -> None:
 
     # Eval
     pred = clf.predict(X_test)
+    # Probabilities / confidence diagnostics (aligns with live strategy)
+    conf_stats = {}
+    if hasattr(clf, "predict_proba"):
+        proba = clf.predict_proba(X_test)
+        conf = np.max(proba, axis=1)
+        correct = (pred == y_test.to_numpy())
+        conf_stats = {
+            "avg_conf": float(np.mean(conf)),
+            "avg_conf_correct": float(np.mean(conf[correct])) if np.any(correct) else None,
+            "avg_conf_incorrect": float(np.mean(conf[~correct])) if np.any(~correct) else None,
+        }
+        # coverage at a few thresholds
+        for thr in (0.50, 0.55, 0.60, 0.65):
+            mask = conf >= thr
+            if np.any(mask):
+                conf_stats[f"coverage@{thr:.2f}"] = float(np.mean(mask))
+                conf_stats[f"acc@{thr:.2f}"] = float(np.mean((pred[mask] == y_test.to_numpy()[mask])))
+            else:
+                conf_stats[f"coverage@{thr:.2f}"] = 0.0
+                conf_stats[f"acc@{thr:.2f}"] = None
     acc = accuracy_score(y_test, pred)
     cm = confusion_matrix(y_test, pred)
     report = classification_report(y_test, pred, zero_division=0)
@@ -176,6 +196,10 @@ def main() -> None:
         "train_metrics": {
             "accuracy": float(acc),
             "confusion_matrix": cm.tolist(),
+            "report": report,
+            "train_rows": int(len(X_train)),
+            "test_rows": int(len(X_test)),
+            **conf_stats,
         },
     }
 

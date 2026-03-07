@@ -10,12 +10,10 @@ import pandas as pd
 # Backward-compatible output type used elsewhere in the codebase / GUI.
 StrategyOutput = Dict[str, Any]
 
-
 class Signal(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"
-
 
 @dataclass(frozen=True)
 class StrategyResult:
@@ -40,7 +38,6 @@ class StrategyResult:
             "meta": dict(self.meta) if self.meta is not None else {},
         }
 
-
 def _coerce_signal(v: Any) -> Signal:
     if isinstance(v, Signal):
         return v
@@ -50,7 +47,6 @@ def _coerce_signal(v: Any) -> Signal:
     if s == "SELL":
         return Signal.SELL
     return Signal.HOLD
-
 
 def _coerce_confidence(v: Any) -> float:
     try:
@@ -62,7 +58,6 @@ def _coerce_confidence(v: Any) -> float:
     if c > 1.0:
         return 1.0
     return c
-
 
 def normalize_result(
     raw: Union[StrategyResult, Mapping[str, Any], None],
@@ -103,7 +98,6 @@ def normalize_result(
         confidence=_coerce_confidence(conf),
         meta=meta,
     )
-
 
 class Strategy(ABC):
     """Base class for all strategies.

@@ -154,7 +154,32 @@ class MLStrategy(Strategy):
     def _evaluate(self, data_by_tf: dict[int, pd.DataFrame]):
         df = next(iter(data_by_tf.values()))
         if df is None or df.empty:
-            return {"name": self.name, "signal": "HOLD", "confidence": 0.0, "meta": {"reason": "no_data"}}
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                    "confidence": 0.0,
+                "meta": {"reason": "no_data"},
+            }
+
+        # Live trading: ALWAYS use the last CLOSED candle (exclude forming bar)
+        if len(df) < 2:
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                    "confidence": 0.0,
+                "meta": {"reason": "insufficient_bars"},
+            }
+
+        closed = df.iloc[:-1]
+        if closed is None or closed.empty:
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                    "confidence": 0.0,
+                "meta": {"reason": "insufficient_closed_bars"},
+            }
+
+        df = closed
 
         # --- Feature set version gating (optional but recommended) ---
         if self.feature_set_version is not None:
@@ -280,7 +305,7 @@ class MLStrategy(Strategy):
             return {
                 "name": self.name,
                 "signal": "HOLD",
-                "confidence": 0.0,
+                    "confidence": 0.0,
                 "meta": {
                     "reason": "missing_features",
                     "missing": missing[:25],
@@ -294,13 +319,13 @@ class MLStrategy(Strategy):
 
         # Build feature vector in the EXACT expected order
         try:
-            X = df.loc[df.index[-1:], feature_cols].copy()
+            X = df.loc[df.index[-1:], feature_cols].copy()  # df already excludes forming bar
             X = self._clean_X(X)
         except Exception as e:
             return {
                 "name": self.name,
                 "signal": "HOLD",
-                "confidence": 0.0,
+                    "confidence": 0.0,
                 "meta": {
                     "reason": "bad_features",
                     "error": str(e),
@@ -333,7 +358,7 @@ class MLStrategy(Strategy):
             return {
                 "name": self.name,
                 "signal": "HOLD",
-                "confidence": 0.0,
+                    "confidence": 0.0,
                 "meta": {
                     "reason": "model_error",
                     "error": str(e),

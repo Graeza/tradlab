@@ -125,7 +125,7 @@ class MT5Client:
         return self._call(mt5.copy_rates_from_pos, symbol, timeframe, start_pos, count)
 
     def order_send(self, request: dict):
-        return self._call(mt5.order_send, request)
+        return self._call(mt5.order_send, request=request)
 
     # --- expose constants for convenience (do not touch terminal) ---
     @property

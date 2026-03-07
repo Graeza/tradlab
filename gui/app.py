@@ -26,6 +26,7 @@ from core.bot_controller import BotController
 from strategies.rsi_ema import RSIEMAStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
+from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 
 from config.settings import (
     SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
@@ -38,39 +39,86 @@ from trade_executor import TradeExecutor
 from utils.mt5_positions import close_positions, list_positions
 from utils.mt5_account import get_account_summary
 
-
 class TrainWorker(QtCore.QObject):
     line = QtCore.Signal(str)
     finished = QtCore.Signal(bool, str)  # (ok, message)
 
-    def __init__(self, steps: list[list[str]]):
+    def __init__(self, steps: list[list[str]], cwd: str | None = None):
         super().__init__()
         self.steps = steps
+        self.cwd = cwd
+        self._stop = False
+        self._proc = None
 
     @QtCore.Slot()
     def run(self):
+        ok = True
+        msg = "Training completed"
+
         try:
-            for cmd in self.steps:
-                self.line.emit("[TRAIN] " + " ".join(cmd))
-                p = subprocess.Popen(
+            for i, cmd in enumerate(self.steps, start=1):
+                if self._stop:
+                    ok = False
+                    msg = "Cancelled"
+                    self.line.emit("[TRAIN] Cancelled.")
+                    break
+
+                self.line.emit(f"[TRAIN] Step {i}/{len(self.steps)}: {' '.join(cmd)}")
+
+                self._proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    universal_newlines=True,
+                    cwd=self.cwd,
                 )
-                assert p.stdout is not None
-                for ln in p.stdout:
+
+                assert self._proc.stdout is not None
+                for ln in self._proc.stdout:
+                    if self._stop:
+                        try:
+                            self._proc.terminate()
+                        except Exception:
+                            pass
+                        ok = False
+                        msg = "Cancelled"
+                        self.line.emit("[TRAIN] Cancelled during subprocess run.")
+                        break
+
                     ln = ln.rstrip("\n")
                     if ln:
                         self.line.emit(ln)
-                rc = p.wait()
+
+                rc = self._proc.wait()
+                self._proc = None
+
+                if self._stop:
+                    ok = False
+                    msg = "Cancelled"
+                    break
+
                 if rc != 0:
-                    self.finished.emit(False, f"Command failed (exit={rc}): {' '.join(cmd)}")
-                    return
-            self.finished.emit(True, "Training completed")
+                    ok = False
+                    msg = f"Step {i} failed (exit code {rc})"
+                    self.line.emit(f"[TRAIN] {msg}")
+                    break
+
         except Exception as e:
-            self.finished.emit(False, f"Training error: {e}")
+            ok = False
+            msg = f"Worker exception: {e}"
+            self.line.emit(f"[TRAIN] {msg}")
+
+        self.finished.emit(ok, msg)
+
+    def stop(self):
+        self._stop = True
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
 
 class BacktestWorker(QtCore.QObject):
     line = QtCore.Signal(str)
@@ -159,13 +207,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # MT5 status badge (auto-updated)
         self.lbl_mt5_badge = QtWidgets.QLabel("MT5: —")
         self.lbl_mt5_badge.setStyleSheet(
-            "padding:4px 8px; border-radius:10px; font-weight:600; background:#555; color:white;"
+            "padding:2px 4px; border-radius:6px; font-weight:600; background:#555; color:white;"
         )
         self.btn_mt5_reconnect = QtWidgets.QPushButton("Reconnect MT5")
 
-        self.btn_close_pos = QtWidgets.QPushButton("Close POSITIVE")
-        self.btn_close_neg = QtWidgets.QPushButton("Close NEGATIVE")
-        self.btn_close_all = QtWidgets.QPushButton("Close ALL")
+        self.btn_close_pos = QtWidgets.QPushButton("Close Positives")
+        self.btn_close_neg = QtWidgets.QPushButton("Close Negatives")
+        self.btn_close_all = QtWidgets.QPushButton("Close All")
         self.btn_refresh = QtWidgets.QPushButton("Refresh Positions")
 
         top.addWidget(self.btn_start)
@@ -195,13 +243,191 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs = QtWidgets.QTabWidget()
         rlayout.addWidget(tabs)
 
+        # ========== TAB: Strategies ==========
+        strat_tab = QtWidgets.QWidget()
+        strat_layout = QtWidgets.QVBoxLayout(strat_tab)
+
+        self.chk_use_rsi = QtWidgets.QCheckBox("Enable RSI/EMA strategy")
+        self.chk_use_rsi.setChecked(True)
+        self.chk_use_breakout = QtWidgets.QCheckBox("Enable Breakout strategy")
+        self.chk_use_breakout.setChecked(True)
+        self.chk_use_ml = QtWidgets.QCheckBox("Enable ML strategy")
+        self.chk_use_ml.setChecked(bool(USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH)))
+        self.chk_use_boom = QtWidgets.QCheckBox("Enable Boom Spike/Trend strategy")
+        self.chk_use_boom.setChecked(True)
+
+        strat_layout.addWidget(self.chk_use_rsi)
+        strat_layout.addWidget(self.chk_use_breakout)
+        strat_layout.addWidget(self.chk_use_ml)
+        strat_layout.addWidget(self.chk_use_boom)
+
+        wgrp = QtWidgets.QGroupBox("Strategy Weights (base)")
+        wform = QtWidgets.QFormLayout(wgrp)
+
+        self.w_rsi = QtWidgets.QDoubleSpinBox()
+        self.w_rsi.setRange(0.0, 100.0)
+        self.w_rsi.setSingleStep(0.1)
+        self.w_rsi.setValue(float(STRATEGY_WEIGHTS.get("RSI_EMA", 1.0)))
+
+        self.w_breakout = QtWidgets.QDoubleSpinBox()
+        self.w_breakout.setRange(0.0, 100.0)
+        self.w_breakout.setSingleStep(0.1)
+        self.w_breakout.setValue(float(STRATEGY_WEIGHTS.get("BREAKOUT", 1.0)))
+
+        self.w_ml = QtWidgets.QDoubleSpinBox()
+        self.w_ml.setRange(0.0, 100.0)
+        self.w_ml.setSingleStep(0.1)
+        self.w_ml.setValue(float(STRATEGY_WEIGHTS.get("ML", 1.0)))
+
+        self.w_boom = QtWidgets.QDoubleSpinBox()
+        self.w_boom.setRange(0.0, 100.0)
+        self.w_boom.setSingleStep(0.1)
+        self.w_boom.setValue(float(STRATEGY_WEIGHTS.get("BOOM_SPIKE_TREND", 1.3)))
+
+        wform.addRow("RSI/EMA", self.w_rsi)
+        wform.addRow("Breakout", self.w_breakout)
+        wform.addRow("ML", self.w_ml)
+        wform.addRow("Boom Spike/Trend", self.w_boom)
+        strat_layout.addWidget(wgrp)
+
+        self.spin_min_conf = QtWidgets.QDoubleSpinBox()
+        self.spin_min_conf.setRange(0.0, 1.0)
+        self.spin_min_conf.setSingleStep(0.01)
+        self.spin_min_conf.setValue(float(ENSEMBLE_MIN_CONF))
+        strat_layout.addWidget(QtWidgets.QLabel("Ensemble Min Confidence"))
+        strat_layout.addWidget(self.spin_min_conf)
+
+        btns = QtWidgets.QHBoxLayout()
+        self.btn_apply_strat = QtWidgets.QPushButton("Apply Strategy Settings")
+        btns.addWidget(self.btn_apply_strat)
+        btns.addStretch(1)
+        strat_layout.addLayout(btns)
+
+        strat_layout.addStretch(1)
+        tabs.addTab(strat_tab, "Strategies")
+
+        # ========== TAB: Risk ==========
+        risk_tab = QtWidgets.QWidget()
+        risk_layout = QtWidgets.QVBoxLayout(risk_tab)
+
+        risk_form = QtWidgets.QFormLayout()
+        risk_layout.addLayout(risk_form)
+
+        def _ds(minv, maxv, step, val):
+            w = QtWidgets.QDoubleSpinBox()
+            w.setRange(minv, maxv)
+            w.setDecimals(6)
+            w.setSingleStep(step)
+            w.setValue(val)
+            return w
+
+        # placeholder defaults; synced after self.risk created
+        self.risk_max_risk_pct = _ds(0.01, 20.0, 0.10, 1.0)
+        risk_form.addRow("Max risk per trade (%)", self.risk_max_risk_pct)
+
+        self.risk_min_conf = _ds(0.0, 1.0, 0.01, 0.60)
+        risk_form.addRow("Min confidence", self.risk_min_conf)
+
+        self.risk_sl_atr = _ds(0.1, 20.0, 0.1, 2.0)
+        risk_form.addRow("SL ATR multiplier", self.risk_sl_atr)
+
+        self.risk_tp_rr = _ds(0.1, 20.0, 0.1, 1.5)
+        risk_form.addRow("TP R:R", self.risk_tp_rr)
+
+        self.risk_fallback_sl = _ds(0.0001, 0.10, 0.0001, 0.003)
+        risk_form.addRow("Fallback SL % of price", self.risk_fallback_sl)
+
+        self.risk_max_spread = QtWidgets.QSpinBox()
+        self.risk_max_spread.setRange(0, 10_000)
+        self.risk_max_spread.setValue(50)
+        risk_form.addRow("Max spread (points)", self.risk_max_spread)
+
+        self.risk_base_dev = QtWidgets.QSpinBox()
+        self.risk_base_dev.setRange(0, 10_000)
+        self.risk_base_dev.setValue(20)
+        risk_form.addRow("Base deviation (points)", self.risk_base_dev)
+
+        self.btn_apply_risk = QtWidgets.QPushButton("Apply Risk Settings")
+        risk_layout.addWidget(self.btn_apply_risk)
+        risk_layout.addStretch(1)
+        tabs.addTab(risk_tab, "Risk")
+
+        # ========== TAB: Execution Guard ==========
+        ex_tab = QtWidgets.QWidget()
+        ex_layout = QtWidgets.QVBoxLayout(ex_tab)
+
+        ex_form = QtWidgets.QFormLayout()
+        ex_layout.addLayout(ex_form)
+
+        self.ex_force_fixed_lot = QtWidgets.QCheckBox("Minimum lot size")
+        self.ex_force_fixed_lot.setChecked(False)
+        ex_form.addRow(self.ex_force_fixed_lot)
+
+
+        self.ex_fixed_sl_tp = QtWidgets.QCheckBox("Use SL/TP offset")
+        self.ex_fixed_sl_tp.setChecked(False)
+        ex_form.addRow(self.ex_fixed_sl_tp)
+
+        self.ex_sl_tp_offset = QtWidgets.QDoubleSpinBox()
+        self.ex_sl_tp_offset.setDecimals(2)
+        self.ex_sl_tp_offset.setRange(0.0, 1_000_000.0)
+        self.ex_sl_tp_offset.setValue(10.0)
+        ex_form.addRow("SL/TP offset (price)", self.ex_sl_tp_offset)
+
+        self.ex_enable_spread = QtWidgets.QCheckBox("Enable spread filter")
+        self.ex_enable_spread.setChecked(True)
+        ex_form.addRow(self.ex_enable_spread)
+
+        self.ex_max_spread = QtWidgets.QSpinBox()
+        self.ex_max_spread.setRange(0, 10_000)
+        self.ex_max_spread.setValue(50)
+        ex_form.addRow("Max spread (points)", self.ex_max_spread)
+
+        self.ex_enable_session = QtWidgets.QCheckBox("Enable session filter (local time)")
+        self.ex_enable_session.setChecked(False)
+        ex_form.addRow(self.ex_enable_session)
+
+        self.ex_session_start = QtWidgets.QSpinBox()
+        self.ex_session_start.setRange(0, 23)
+        self.ex_session_start.setValue(0)
+        ex_form.addRow("Session start hour", self.ex_session_start)
+
+        self.ex_session_end = QtWidgets.QSpinBox()
+        self.ex_session_end.setRange(0, 24)
+        self.ex_session_end.setValue(24)
+        ex_form.addRow("Session end hour", self.ex_session_end)
+
+        self.ex_allow_weekends = QtWidgets.QCheckBox("Allow weekends")
+        self.ex_allow_weekends.setChecked(False)
+        ex_form.addRow(self.ex_allow_weekends)
+
+        self.ex_max_retries = QtWidgets.QSpinBox()
+        self.ex_max_retries.setRange(0, 20)
+        self.ex_max_retries.setValue(0)
+        ex_form.addRow("Max retries", self.ex_max_retries)
+
+        self.ex_retry_delay = QtWidgets.QSpinBox()
+        self.ex_retry_delay.setRange(0, 60_000)
+        self.ex_retry_delay.setValue(250)
+        ex_form.addRow("Retry delay (ms)", self.ex_retry_delay)
+
+        self.btn_apply_exec_guard = QtWidgets.QPushButton("Apply Execution Guard")
+        ex_layout.addWidget(self.btn_apply_exec_guard)
+
+        self.lbl_exec_guard_status = QtWidgets.QLabel("Execution Guard: —")
+        self.lbl_exec_guard_status.setStyleSheet("color: gray;")
+        ex_layout.addWidget(self.lbl_exec_guard_status)
+
+        ex_layout.addStretch(1)
+        tabs.addTab(ex_tab, "Execution Guard")
+
         # ========== TAB: Positions ==========
         pos_tab = QtWidgets.QWidget()
         pos_layout = QtWidgets.QVBoxLayout(pos_tab)
 
         self.tbl = QtWidgets.QTableWidget(0, 6)
         self.tbl.setHorizontalHeaderLabels(["Ticket", "Symbol", "Type", "Volume", "Open Price", "Profit"])
-        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         pos_layout.addWidget(self.tbl)
 
         self.lbl_totals = QtWidgets.QLabel("Totals: —")
@@ -212,34 +438,6 @@ class MainWindow(QtWidgets.QMainWindow):
         pos_layout.addWidget(self.lbl_status)
 
         tabs.addTab(pos_tab, "Positions")
-
-        # ========== TAB: Strategy Debug ==========
-        dbg_tab = QtWidgets.QWidget()
-        dbg_layout = QtWidgets.QVBoxLayout(dbg_tab)
-
-        top_dbg = QtWidgets.QHBoxLayout()
-        self.cmb_symbol = QtWidgets.QComboBox()
-        self.cmb_symbol.addItems(SYMBOL_LIST)
-        top_dbg.addWidget(QtWidgets.QLabel("Symbol:"))
-        top_dbg.addWidget(self.cmb_symbol)
-        self.cmb_symbol.currentTextChanged.connect(self.render_debug)
-        top_dbg.addStretch(1)
-        dbg_layout.addLayout(top_dbg)
-
-        self.lbl_final = QtWidgets.QLabel("Final: —")
-        dbg_layout.addWidget(self.lbl_final)
-
-        self.tbl_debug = QtWidgets.QTableWidget(0, 5)
-        self.tbl_debug.setHorizontalHeaderLabels(["Strategy", "Signal", "Confidence", "Eff W", "Meta"])
-        header = self.tbl_debug.horizontalHeader()
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        dbg_layout.addWidget(self.tbl_debug)
-
-        tabs.addTab(dbg_tab, "Strategy Debug")
 
         # ========== TAB: Portfolio ==========
         port_tab = QtWidgets.QWidget()
@@ -295,89 +493,38 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl_perf = QtWidgets.QTableWidget(0, 5)
         self.tbl_perf.setHorizontalHeaderLabels(["Name", "N", "Win %", "Avg Ret", "Expectancy"])
-        self.tbl_perf.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tbl_perf.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         perf_layout.addWidget(self.tbl_perf)
 
         tabs.addTab(perf_tab, "Performance")
 
-        # ========== TAB: Strategies ==========
-        strat_tab = QtWidgets.QWidget()
-        strat_layout = QtWidgets.QVBoxLayout(strat_tab)
+        # ========== TAB: Strategy Debug ==========
+        dbg_tab = QtWidgets.QWidget()
+        dbg_layout = QtWidgets.QVBoxLayout(dbg_tab)
 
-        self.chk_use_rsi = QtWidgets.QCheckBox("Enable RSI/EMA strategy")
-        self.chk_use_rsi.setChecked(True)
-        self.chk_use_breakout = QtWidgets.QCheckBox("Enable Breakout strategy")
-        self.chk_use_breakout.setChecked(True)
-        self.chk_use_ml = QtWidgets.QCheckBox("Enable ML strategy")
-        self.chk_use_ml.setChecked(bool(USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH)))
+        top_dbg = QtWidgets.QHBoxLayout()
+        self.cmb_symbol = QtWidgets.QComboBox()
+        self.cmb_symbol.addItems(SYMBOL_LIST)
+        top_dbg.addWidget(QtWidgets.QLabel("Symbol:"))
+        top_dbg.addWidget(self.cmb_symbol)
+        self.cmb_symbol.currentTextChanged.connect(self.render_debug)
+        top_dbg.addStretch(1)
+        dbg_layout.addLayout(top_dbg)
 
-        strat_layout.addWidget(self.chk_use_rsi)
-        strat_layout.addWidget(self.chk_use_breakout)
-        strat_layout.addWidget(self.chk_use_ml)
+        self.lbl_final = QtWidgets.QLabel("Final: —")
+        dbg_layout.addWidget(self.lbl_final)
 
-        wgrp = QtWidgets.QGroupBox("Strategy Weights (base)")
-        wform = QtWidgets.QFormLayout(wgrp)
+        self.tbl_debug = QtWidgets.QTableWidget(0, 5)
+        self.tbl_debug.setHorizontalHeaderLabels(["Strategy", "Signal", "Confidence", "Eff W", "Meta"])
+        header = self.tbl_debug.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        dbg_layout.addWidget(self.tbl_debug)
 
-        self.w_rsi = QtWidgets.QDoubleSpinBox()
-        self.w_rsi.setRange(0.0, 100.0)
-        self.w_rsi.setSingleStep(0.1)
-        self.w_rsi.setValue(float(STRATEGY_WEIGHTS.get("RSIEMAStrategy", 1.0)))
-
-        self.w_breakout = QtWidgets.QDoubleSpinBox()
-        self.w_breakout.setRange(0.0, 100.0)
-        self.w_breakout.setSingleStep(0.1)
-        self.w_breakout.setValue(float(STRATEGY_WEIGHTS.get("BreakoutStrategy", 1.0)))
-
-        self.w_ml = QtWidgets.QDoubleSpinBox()
-        self.w_ml.setRange(0.0, 100.0)
-        self.w_ml.setSingleStep(0.1)
-        self.w_ml.setValue(float(STRATEGY_WEIGHTS.get("MLStrategy", 1.0)))
-
-        wform.addRow("RSI/EMA", self.w_rsi)
-        wform.addRow("Breakout", self.w_breakout)
-        wform.addRow("ML", self.w_ml)
-        strat_layout.addWidget(wgrp)
-
-        self.spin_min_conf = QtWidgets.QDoubleSpinBox()
-        self.spin_min_conf.setRange(0.0, 1.0)
-        self.spin_min_conf.setSingleStep(0.01)
-        self.spin_min_conf.setValue(float(ENSEMBLE_MIN_CONF))
-        strat_layout.addWidget(QtWidgets.QLabel("Ensemble Min Confidence"))
-        strat_layout.addWidget(self.spin_min_conf)
-
-        btns = QtWidgets.QHBoxLayout()
-        self.btn_apply_strat = QtWidgets.QPushButton("Apply Strategy Settings")
-        btns.addWidget(self.btn_apply_strat)
-        btns.addStretch(1)
-        strat_layout.addLayout(btns)
-
-        strat_layout.addStretch(1)
-        tabs.addTab(strat_tab, "Strategies")
-
-        # ========== TAB: Experiments ==========
-        exp_tab = QtWidgets.QWidget()
-        exp_layout = QtWidgets.QVBoxLayout(exp_tab)
-
-        exp_top = QtWidgets.QHBoxLayout()
-        self.btn_exp_refresh = QtWidgets.QPushButton("Refresh")
-        self.btn_exp_promote = QtWidgets.QPushButton("Promote Selected Model")
-        exp_top.addWidget(self.btn_exp_refresh)
-        exp_top.addStretch(1)
-        exp_top.addWidget(self.btn_exp_promote)
-        exp_layout.addLayout(exp_top)
-
-        self.tbl_exp = QtWidgets.QTableWidget(0, 8)
-        self.tbl_exp.setHorizontalHeaderLabels([
-            "Type", "Time", "Name", "Accuracy", "Macro F1", "Feat Ver", "Feat ID", "Model Path"
-        ])
-        self.tbl_exp.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
-        exp_layout.addWidget(self.tbl_exp)
-
-        self.lbl_exp_status = QtWidgets.QLabel("Experiments: —")
-        self.lbl_exp_status.setStyleSheet("color: gray;")
-        exp_layout.addWidget(self.lbl_exp_status)
-
-        tabs.addTab(exp_tab, "Experiments")
+        tabs.addTab(dbg_tab, "Strategy Debug")
 
         # ========== TAB: Backtest ==========
         bt_tab = QtWidgets.QWidget()
@@ -465,105 +612,30 @@ class MainWindow(QtWidgets.QMainWindow):
         train_layout.addStretch(1)
         tabs.addTab(train_tab, "ML Training")
 
-        # ========== TAB: Risk ==========
-        risk_tab = QtWidgets.QWidget()
-        risk_layout = QtWidgets.QVBoxLayout(risk_tab)
+        # ========== TAB: Experiments ==========
+        exp_tab = QtWidgets.QWidget()
+        exp_layout = QtWidgets.QVBoxLayout(exp_tab)
 
-        risk_form = QtWidgets.QFormLayout()
-        risk_layout.addLayout(risk_form)
+        exp_top = QtWidgets.QHBoxLayout()
+        self.btn_exp_refresh = QtWidgets.QPushButton("Refresh")
+        self.btn_exp_promote = QtWidgets.QPushButton("Promote Selected Model")
+        exp_top.addWidget(self.btn_exp_refresh)
+        exp_top.addStretch(1)
+        exp_top.addWidget(self.btn_exp_promote)
+        exp_layout.addLayout(exp_top)
 
-        def _ds(minv, maxv, step, val):
-            w = QtWidgets.QDoubleSpinBox()
-            w.setRange(minv, maxv)
-            w.setDecimals(6)
-            w.setSingleStep(step)
-            w.setValue(val)
-            return w
+        self.tbl_exp = QtWidgets.QTableWidget(0, 8)
+        self.tbl_exp.setHorizontalHeaderLabels([
+            "Type", "Time", "Name", "Win Rate/Accuracy", "Profit Factor/Macro F1", "Return%/Feat Ver", "Max Drawdown%/Feat ID", "Model Path"
+        ])
+        self.tbl_exp.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
+        exp_layout.addWidget(self.tbl_exp)
 
-        # placeholder defaults; synced after self.risk created
-        self.risk_max_risk_pct = _ds(0.01, 20.0, 0.10, 1.0)
-        risk_form.addRow("Max risk per trade (%)", self.risk_max_risk_pct)
+        self.lbl_exp_status = QtWidgets.QLabel("Experiments: —")
+        self.lbl_exp_status.setStyleSheet("color: gray;")
+        exp_layout.addWidget(self.lbl_exp_status)
 
-        self.risk_min_conf = _ds(0.0, 1.0, 0.01, 0.60)
-        risk_form.addRow("Min confidence", self.risk_min_conf)
-
-        self.risk_sl_atr = _ds(0.1, 20.0, 0.1, 2.0)
-        risk_form.addRow("SL ATR multiplier", self.risk_sl_atr)
-
-        self.risk_tp_rr = _ds(0.1, 20.0, 0.1, 1.5)
-        risk_form.addRow("TP R:R", self.risk_tp_rr)
-
-        self.risk_fallback_sl = _ds(0.0001, 0.10, 0.0001, 0.003)
-        risk_form.addRow("Fallback SL % of price", self.risk_fallback_sl)
-
-        self.risk_max_spread = QtWidgets.QSpinBox()
-        self.risk_max_spread.setRange(0, 10_000)
-        self.risk_max_spread.setValue(50)
-        risk_form.addRow("Max spread (points)", self.risk_max_spread)
-
-        self.risk_base_dev = QtWidgets.QSpinBox()
-        self.risk_base_dev.setRange(0, 10_000)
-        self.risk_base_dev.setValue(20)
-        risk_form.addRow("Base deviation (points)", self.risk_base_dev)
-
-        self.btn_apply_risk = QtWidgets.QPushButton("Apply Risk Settings")
-        risk_layout.addWidget(self.btn_apply_risk)
-        risk_layout.addStretch(1)
-        tabs.addTab(risk_tab, "Risk")
-
-        # ========== TAB: Execution Guard ==========
-        ex_tab = QtWidgets.QWidget()
-        ex_layout = QtWidgets.QVBoxLayout(ex_tab)
-
-        ex_form = QtWidgets.QFormLayout()
-        ex_layout.addLayout(ex_form)
-
-        self.ex_enable_spread = QtWidgets.QCheckBox("Enable spread filter")
-        self.ex_enable_spread.setChecked(True)
-        ex_form.addRow(self.ex_enable_spread)
-
-        self.ex_max_spread = QtWidgets.QSpinBox()
-        self.ex_max_spread.setRange(0, 10_000)
-        self.ex_max_spread.setValue(50)
-        ex_form.addRow("Max spread (points)", self.ex_max_spread)
-
-        self.ex_enable_session = QtWidgets.QCheckBox("Enable session filter (local time)")
-        self.ex_enable_session.setChecked(False)
-        ex_form.addRow(self.ex_enable_session)
-
-        self.ex_session_start = QtWidgets.QSpinBox()
-        self.ex_session_start.setRange(0, 23)
-        self.ex_session_start.setValue(0)
-        ex_form.addRow("Session start hour", self.ex_session_start)
-
-        self.ex_session_end = QtWidgets.QSpinBox()
-        self.ex_session_end.setRange(0, 24)
-        self.ex_session_end.setValue(24)
-        ex_form.addRow("Session end hour", self.ex_session_end)
-
-        self.ex_allow_weekends = QtWidgets.QCheckBox("Allow weekends")
-        self.ex_allow_weekends.setChecked(False)
-        ex_form.addRow(self.ex_allow_weekends)
-
-        self.ex_max_retries = QtWidgets.QSpinBox()
-        self.ex_max_retries.setRange(0, 20)
-        self.ex_max_retries.setValue(0)
-        ex_form.addRow("Max retries", self.ex_max_retries)
-
-        self.ex_retry_delay = QtWidgets.QSpinBox()
-        self.ex_retry_delay.setRange(0, 60_000)
-        self.ex_retry_delay.setValue(250)
-        ex_form.addRow("Retry delay (ms)", self.ex_retry_delay)
-
-        self.btn_apply_exec_guard = QtWidgets.QPushButton("Apply Execution Guard")
-        ex_layout.addWidget(self.btn_apply_exec_guard)
-
-        self.lbl_exec_guard_status = QtWidgets.QLabel("Execution Guard: —")
-        self.lbl_exec_guard_status.setStyleSheet("color: gray;")
-        ex_layout.addWidget(self.lbl_exec_guard_status)
-
-        ex_layout.addStretch(1)
-        tabs.addTab(ex_tab, "Execution Guard")
+        tabs.addTab(exp_tab, "Experiments")
 
         split.addWidget(right)
         split.setSizes([740, 430])
@@ -671,11 +743,17 @@ class MainWindow(QtWidgets.QMainWindow):
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", filename))
 
     def _experiments_path(self) -> str:
+        # Prefer explicit config setting if present; otherwise default to a stable, project-root-relative path.
+        # Using an absolute path avoids 'works in terminal but not in GUI' issues due to different CWDs.
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         try:
             from config.settings import EXPERIMENT_LOG_PATH  # type: ignore
-            return str(EXPERIMENT_LOG_PATH)
+            p = str(EXPERIMENT_LOG_PATH)
+            if not os.path.isabs(p):
+                p = os.path.abspath(os.path.join(project_root, p))
+            return p
         except Exception:
-            return os.path.join("ml", "experiments", "experiments.jsonl")
+            return os.path.abspath(os.path.join(project_root, "ml", "experiments", "experiments.jsonl"))
 
     def _set_badge(self, text: str, ok: bool):
         self.lbl_mt5_badge.setText(text)
@@ -720,6 +798,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "RSIEMAStrategy": True,
             "BreakoutStrategy": True,
             "MLStrategy": bool(USE_ML_STRATEGY),
+            "BoomSpikeTrendStrategy": True,
         }
 
         strategies = []
@@ -727,6 +806,8 @@ class MainWindow(QtWidgets.QMainWindow):
             strategies.append(RSIEMAStrategy())
         if enabled.get("BreakoutStrategy", True):
             strategies.append(BreakoutStrategy())
+        if enabled.get("BoomSpikeTrendStrategy", True):
+            strategies.append(BoomSpikeTrendStrategy())
 
         if enabled.get("MLStrategy", True) and USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
             try:
@@ -759,6 +840,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "RSIEMAStrategy": self.chk_use_rsi.isChecked(),
             "BreakoutStrategy": self.chk_use_breakout.isChecked(),
             "MLStrategy": self.chk_use_ml.isChecked(),
+            "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
         }
 
         strategies = self._build_strategies(enabled=enabled)
@@ -766,9 +848,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update ensemble in-place (orchestrator holds reference)
         self.ensemble.strategies = strategies
         self.ensemble.weights = {
-            "RSIEMAStrategy": float(self.w_rsi.value()),
-            "BreakoutStrategy": float(self.w_breakout.value()),
-            "MLStrategy": float(self.w_ml.value()),
+            "RSI_EMA": float(self.w_rsi.value()),
+            "BREAKOUT": float(self.w_breakout.value()),
+            "ML": float(self.w_ml.value()),
+            "BOOM_SPIKE_TREND": float(self.w_boom.value()),
         }
         self.ensemble.min_conf = float(self.spin_min_conf.value())
 
@@ -781,11 +864,14 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def refresh_experiments(self):
         path = self._experiments_path()
+        self.log.write(f"[EXP] GUI reading experiments from: {os.path.abspath(path)}")
+        print("[EXP][GUI] reading:", os.path.abspath(path))
         rows = []
 
         if not os.path.exists(path):
             self.lbl_exp_status.setText(f"Experiments: log not found: {path}")
             self.tbl_exp.setRowCount(0)
+            self.log.write(f"[EXP] Log not found: {path}")
             return
 
         try:
@@ -798,30 +884,91 @@ class MainWindow(QtWidgets.QMainWindow):
                         rec = json.loads(ln)
                     except Exception:
                         continue
-                    rows.append(rec)
+                    if isinstance(rec, dict):
+                        rows.append(rec)
         except Exception as e:
             self.lbl_exp_status.setText(f"Experiments: failed to read: {e}")
+            self.tbl_exp.setRowCount(0)
+            self.log.write(f"[EXP] Failed to read log: {e}")
             return
 
-        rows = list(reversed(rows))  # newest first
         self.tbl_exp.setRowCount(0)
 
-        def get_metric(rec, key):
-            m = rec.get("metrics") or {}
-            return m.get(key) if isinstance(m, dict) else rec.get(key)
+        def get_metric(rec, *keys):
+            m = rec.get("metrics")
+            if isinstance(m, dict):
+                for k in keys:
+                    if k in m and m[k] is not None:
+                        return m[k]
+            for k in keys:
+                if k in rec and rec[k] is not None:
+                    return rec[k]
+            return None
+
+        def get_artifact_path(rec):
+            arts = rec.get("artifacts")
+            if isinstance(arts, dict):
+                return (
+                    arts.get("model")
+                    or arts.get("model_path")
+                    or arts.get("output_model_path")
+                    or arts.get("metrics")
+                    or arts.get("equity_curve")
+                    or ""
+                )
+            return str(
+                rec.get("output_model_path")
+                or rec.get("model_path")
+                or rec.get("artifact_path")
+                or ""
+            )
+
+        def sort_key(rec):
+            return str(
+                rec.get("utc_ts")
+                or rec.get("time")
+                or rec.get("timestamp")
+                or rec.get("created_at")
+                or ""
+            )
+
+        rows = sorted(rows, key=sort_key, reverse=True)
 
         for rec in rows[:500]:
             r = self.tbl_exp.rowCount()
             self.tbl_exp.insertRow(r)
 
             rtype = str(rec.get("type") or "ml")
-            ts = str(rec.get("time") or rec.get("timestamp") or "")
-            name = str(rec.get("model_version") or rec.get("name") or rec.get("run_name") or "")
-            acc = get_metric(rec, "accuracy")
-            f1 = get_metric(rec, "macro_f1")
-            feat_ver = rec.get("feature_set_version") or rec.get("feature_version") or ""
-            feat_id = rec.get("feature_set_id") or rec.get("feature_id") or ""
-            model_path = str(rec.get("model_path") or rec.get("artifact_path") or "")
+            ts = str(
+                rec.get("utc_ts")
+                or rec.get("time")
+                or rec.get("timestamp")
+                or ""
+            )
+
+            if rtype == "backtest":
+                name = str(
+                    rec.get("name")
+                    or f"{rec.get('symbol', '')} [{rec.get('tag', '')}]".strip()
+                )
+                acc = get_metric(rec, "win_rate")
+                f1 = get_metric(rec, "profit_factor")
+                feat_ver = get_metric(rec, "total_return_pct")
+                feat_id = get_metric(rec, "max_drawdown_pct")
+                model_path = str(get_artifact_path(rec))
+            else:
+                name = str(
+                    rec.get("model_version")
+                    or rec.get("name")
+                    or rec.get("run_name")
+                    or rec.get("model_type")
+                    or ""
+                )
+                acc = get_metric(rec, "accuracy", "acc")
+                f1 = get_metric(rec, "macro_f1", "f1_macro", "f1")
+                feat_ver = rec.get("feature_set_version") or rec.get("feature_version") or ""
+                feat_id = rec.get("feature_set_id") or rec.get("feature_id") or ""
+                model_path = str(get_artifact_path(rec))
 
             vals = [rtype, ts, name, acc, f1, feat_ver, feat_id, model_path]
             for c, v in enumerate(vals):
@@ -831,6 +978,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tbl_exp.setItem(r, c, item)
 
         self.lbl_exp_status.setText(f"Experiments: {len(rows)} runs (showing up to 500)")
+        self.log.write(f"[EXP] Loaded {len(rows)} runs from {path}")
 
     @QtCore.Slot()
     def promote_selected_model(self):
@@ -910,9 +1058,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bt_thread.start()
 
     # ---------- Training helpers ----------
-
     def _run_training_steps(self, steps: list[list[str]]):
-        if self._train_thread is not None:
+        if getattr(self, "_train_thread", None) is not None:
             self.log.write("[TRAIN] Training already running")
             return
 
@@ -922,54 +1069,92 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_export_train.setEnabled(False)
         self.btn_reload_ml.setEnabled(False)
 
-        worker = TrainWorker(steps)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        worker = TrainWorker(steps, cwd=project_root)
         th = QtCore.QThread(self)
         worker.moveToThread(th)
 
+        self._train_worker = worker
+        self._train_thread = th
+
         worker.line.connect(self.log.write)
+        th.started.connect(worker.run)
 
         def _done(ok: bool, msg: str):
             self.lbl_train_status.setText(f"Training: {'OK' if ok else 'FAILED'} — {msg}")
+
             self.btn_export_ds.setEnabled(True)
             self.btn_train_ml.setEnabled(True)
             self.btn_export_train.setEnabled(True)
-            self.btn_reload_ml.setEnabled(ok and os.path.exists(ML_MODEL_PATH))
+            self.btn_reload_ml.setEnabled(bool(ok))
+
+            if ok:
+                self.log.write("[TRAIN] All steps completed successfully")
+                if hasattr(self, "refresh_experiments"):
+                    self.refresh_experiments()
+            else:
+                self.log.write(f"[TRAIN] Training failed: {msg}")
+
             th.quit()
-            th.wait(2000)
-            self._train_thread = None
 
         worker.finished.connect(_done)
-        th.started.connect(worker.run)
+        worker.finished.connect(worker.deleteLater)
+        th.finished.connect(th.deleteLater)
 
-        self._train_thread = th
+        def _thread_finished():
+            self._train_worker = None
+            self._train_thread = None
+
+        th.finished.connect(_thread_finished)
+
         th.start()
 
     @QtCore.Slot()
     def export_dataset(self):
         symbol = self.train_symbol.currentText()
         tf = int(self.train_timeframe.currentData())
-        out_csv = self.train_csv.text().strip() or "dataset.csv"
+        out_csv = (self.train_csv.text() or "").strip() or "dataset.csv"
 
-        steps = [[
-            sys.executable,
-            self._script_path("export_dataset.py"),
-            "--symbol", symbol,
-            "--timeframe", str(tf),
-            "--out", out_csv,
-        ]]
-        self._run_training_steps(steps)
-
-    @QtCore.Slot()
-    def train_model(self):
-        out_csv = self.train_csv.text().strip() or "dataset.csv"
-        model_version = self.train_model_version.text().strip() or f"ml_{datetime.utcnow().strftime('%Y-%m-%d')}"
-        schema_version = int(self.train_schema_version.value())
-        strict = self.train_strict_schema.isChecked()
+        self.lbl_train_status.setText(f"Training: exporting dataset… ({symbol}, tf={tf})")
+        self.log.write(f"[ML] Export dataset: symbol={symbol} tf={tf} -> {out_csv}")
 
         cmd = [
             sys.executable,
-            self._script_path("train_model.py"),
+            "-u",
+            "-m",
+            "scripts.export_dataset",
+            "--symbol", symbol,
+            "--timeframe", str(tf),
+            "--out", out_csv,
+        ]
+        self._run_training_steps([cmd])
+
+
+    @QtCore.Slot()
+    def train_model(self):
+        out_csv = (self.train_csv.text() or "").strip() or "dataset.csv"
+        model_version = (self.train_model_version.text() or "").strip() or f"ml_{datetime.utcnow().strftime('%Y-%m-%d')}"
+        schema_version = int(self.train_schema_version.value())
+        strict = bool(self.train_strict_schema.isChecked())
+
+        # Make sure training always saves to the exact same path the bot loads from.
+        # (train_model.py defaults to ML_MODEL_PATH, but explicit is safer)
+        from config.settings import ML_MODEL_PATH
+
+        self.lbl_train_status.setText("Training: training model…")
+        self.log.write(
+            f"[ML] Train model: csv={out_csv} model_version={model_version} "
+            f"schema_version={schema_version} strict={strict} -> {ML_MODEL_PATH}"
+        )
+
+        cmd = [
+            sys.executable,
+            "-u",
+            "-m",
+            "scripts.train_model",
             "--csv", out_csv,
+            "--model-path", str(ML_MODEL_PATH),
             "--model-version", model_version,
             "--schema-version", str(schema_version),
         ]
@@ -978,26 +1163,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._run_training_steps([cmd])
 
+        # NOTE:
+        # If _run_training_steps is async (QProcess), enabling here may be premature.
+        # Prefer enabling in the "finished" callback inside _run_training_steps.
+        # Still, it’s safe to allow the user to click Reload only after training finishes.
+        # (See recommended change below.)
+
+
     @QtCore.Slot()
     def export_and_train(self):
         symbol = self.train_symbol.currentText()
         tf = int(self.train_timeframe.currentData())
-        out_csv = self.train_csv.text().strip() or "dataset.csv"
-        model_version = self.train_model_version.text().strip() or f"ml_{datetime.utcnow().strftime('%Y-%m-%d')}"
+        out_csv = (self.train_csv.text() or "").strip() or "dataset.csv"
+        model_version = (self.train_model_version.text() or "").strip() or f"ml_{datetime.utcnow().strftime('%Y-%m-%d')}"
         schema_version = int(self.train_schema_version.value())
-        strict = self.train_strict_schema.isChecked()
+        strict = bool(self.train_strict_schema.isChecked())
+
+        from config.settings import ML_MODEL_PATH
+
+        self.lbl_train_status.setText(f"Training: export + train… ({symbol}, tf={tf})")
+        self.log.write(
+            f"[ML] Export+Train: symbol={symbol} tf={tf} csv={out_csv} "
+            f"model_version={model_version} schema_version={schema_version} strict={strict} -> {ML_MODEL_PATH}"
+        )
 
         export_cmd = [
             sys.executable,
-            self._script_path("export_dataset.py"),
+            "-u",
+            "-m",
+            "scripts.export_dataset",
             "--symbol", symbol,
             "--timeframe", str(tf),
             "--out", out_csv,
         ]
+
         train_cmd = [
             sys.executable,
-            self._script_path("train_model.py"),
+            "-u",
+            "-m",
+            "scripts.train_model",
             "--csv", out_csv,
+            "--model-path", str(ML_MODEL_PATH),
             "--model-version", model_version,
             "--schema-version", str(schema_version),
         ]
@@ -1006,28 +1212,48 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._run_training_steps([export_cmd, train_cmd])
 
+
     @QtCore.Slot()
     def reload_ml_model(self):
+        # Safety: never reload while bot is running
         if getattr(self.controller, "is_running", False):
             self.log.write("[ML] Stop the bot before reloading the model")
             return
+
         try:
             enabled = {
                 "RSIEMAStrategy": self.chk_use_rsi.isChecked(),
                 "BreakoutStrategy": self.chk_use_breakout.isChecked(),
                 "MLStrategy": self.chk_use_ml.isChecked(),
+                "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),  # include this
             }
+
+            # Preserve existing ensemble knobs if available
+            prev_weights = getattr(getattr(self, "ensemble", None), "weights", None)
+            prev_min_conf = getattr(getattr(self, "ensemble", None), "min_conf", None)
+
             strategies = self._build_strategies(enabled=enabled)
+
             self.ensemble = EnsembleEngine(
                 strategies,
-                weights=self.ensemble.weights,
-                min_conf=self.ensemble.min_conf,
+                weights=prev_weights if prev_weights is not None else None,
+                min_conf=prev_min_conf if prev_min_conf is not None else None,
                 regime_multipliers=REGIME_WEIGHT_MULTIPLIERS,
             )
+
+            # Ensure orchestrator uses the new ensemble
             self.orch.ensemble = self.ensemble
-            self.log.write("[ML] Reloaded strategies/ensemble")
+
+            self.log.write("[ML] Reloaded strategies/ensemble (ML model will be reloaded from ML_MODEL_PATH if present)")
+            self.lbl_train_status.setText("Training: model reloaded into bot (ready)")
+
+            # Optional: refresh experiments so you immediately see the latest run
+            if hasattr(self, "refresh_experiments"):
+                self.refresh_experiments()
+
         except Exception as e:
             self.log.write(f"[ML] Reload failed: {e}")
+            self.lbl_train_status.setText(f"Training: reload failed ({e})")
 
     # ---------- Bot control ----------
 
@@ -1060,6 +1286,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self.log.write(f"[MT5] Reconnect failed: {e}")
 
+    # ---------- Risk / execution guard ----------
+    @QtCore.Slot()
     def apply_risk_settings(self):
         try:
             self.risk.max_risk_pct = float(self.risk_max_risk_pct.value())
@@ -1079,6 +1307,11 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def apply_execution_guard(self):
         try:
+            self.executor.force_symbol_fixed_lot = bool(self.ex_force_fixed_lot.isChecked())
+            # GUI-driven fixed SL/TP offsets for Boom/Crash
+            if hasattr(self.executor, 'boom_crash_fixed_sl_tp'):
+                self.executor.boom_crash_fixed_sl_tp = bool(self.ex_fixed_sl_tp.isChecked())
+                self.executor.boom_crash_sl_tp_offset = float(self.ex_sl_tp_offset.value())
             self.executor.enable_spread_filter = bool(self.ex_enable_spread.isChecked())
             self.executor.max_spread_points = int(self.ex_max_spread.value())
             self.executor.enable_session_filter = bool(self.ex_enable_session.isChecked())
@@ -1088,12 +1321,32 @@ class MainWindow(QtWidgets.QMainWindow):
             self.executor.max_retries = int(self.ex_max_retries.value())
             self.executor.retry_delay_ms = int(self.ex_retry_delay.value())
 
+            fixed = "ON" if self.executor.force_symbol_fixed_lot else "OFF"
+            spread = "ON" if self.executor.enable_spread_filter else "OFF"
+            session = "ON" if self.executor.enable_session_filter else "OFF"
+
             self.lbl_exec_guard_status.setText(
-                f"Execution Guard: spread={'ON' if self.executor.enable_spread_filter else 'OFF'} "
-                f"(max {self.executor.max_spread_points}pt), session={'ON' if self.executor.enable_session_filter else 'OFF'} "
-                f"({self.executor.session_start_hour}-{self.executor.session_end_hour}), "
-                f"retries={self.executor.max_retries}@{self.executor.retry_delay_ms}ms"
+                "spread={spread} (max {max_spread}pt)\n"
+                "session={session} ({start}-{end})\n"
+                "weekends={weekends}\n"
+                "retries={retries}@{delay}ms\n"
+                "fixed_lot={fixed}\n"
+                "fixed_sl_tp={fixed_sl_tp} (offset {offset:g})"
+                .format(
+                    spread=spread,
+                    max_spread=self.executor.max_spread_points,
+                    session=session,
+                    start=self.executor.session_start_hour,
+                    end=self.executor.session_end_hour,
+                    weekends="ON" if self.executor.allow_weekends else "OFF",
+                    retries=self.executor.max_retries,
+                    delay=self.executor.retry_delay_ms,
+                    fixed=fixed,
+                    fixed_sl_tp="ON" if getattr(self.executor, "boom_crash_fixed_sl_tp", False) else "OFF",
+                    offset=getattr(self.executor, "boom_crash_sl_tp_offset", 0.0),
+                )
             )
+
             self.log.write("[EXEC_GUARD] Applied execution guard settings")
         except Exception as e:
             self.log.write(f"[EXEC_GUARD] Apply failed: {e}")
@@ -1102,7 +1355,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_positions(self):
-        pos = list_positions(self.mt5, self.mt5)
+        pos = list_positions(self.mt5)
 
         self.tbl.setUpdatesEnabled(False)
         self.tbl.setRowCount(0)
@@ -1164,7 +1417,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def close_mode(self, mode: str):
         self.log.write(f"[UI] Closing positions: {mode}")
-        summary = close_positions(self.mt5, self.mt5, mode=mode)
+        summary = close_positions(self.mt5, mode=mode)
         for m in summary.get("closed", []):
             self.log.write("[CLOSE] " + m)
         for m in summary.get("failed", []):

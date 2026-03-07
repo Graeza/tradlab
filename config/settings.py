@@ -4,15 +4,18 @@ import keyring as kr
 
 # --- Trading universe ---
 SYMBOL_LIST = [
-    # "EURUSD",
-    # "GBPUSD",
-    "Boom 1000 Index"
+    "Boom 1000 Index",
+    "Boom 900 Index",
+    "Boom 500 Index",
+    "Boom 600 Index",
+    "Boom 300 Index"
 ]
 
 TIMEFRAME_LIST = [
     mt5.TIMEFRAME_M5,
     mt5.TIMEFRAME_M15,
-    # mt5.TIMEFRAME_H1,
+    mt5.TIMEFRAME_H1,
+    mt5.TIMEFRAME_H4,
 ]
 
 PRIMARY_TIMEFRAME = mt5.TIMEFRAME_M5
@@ -47,6 +50,7 @@ STRATEGY_WEIGHTS = {
     "RSI_EMA": 1.0,
     "BREAKOUT": 1.0,
     "ML": 1.2,
+    "BOOM_SPIKE_TREND": 1.3,
 }
 
 # --- Labeling ---
@@ -68,11 +72,13 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "RSI_EMA": 0.7,
         "BREAKOUT": 1.3,
         "ML": 1.0,
+        "BOOM_SPIKE_TREND": 1.05,
     },
     "RANGE": {
         "RSI_EMA": 1.3,
         "BREAKOUT": 0.7,
         "ML": 1.0,
+        "BOOM_SPIKE_TREND": 1.10,
     },
 
     # Volatility
@@ -80,10 +86,12 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "RSI_EMA": 0.9,
         "BREAKOUT": 1.1,
         "ML": 1.0,
+        "BOOM_SPIKE_TREND": 0.85,
     },
     "LOW_VOL": {
         "RSI_EMA": 1.1,
         "BREAKOUT": 0.9,
         "ML": 1.0,
+        "BOOM_SPIKE_TREND": 1.25,
     },
 }

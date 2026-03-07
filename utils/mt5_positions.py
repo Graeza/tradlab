@@ -40,7 +40,7 @@ def close_position(mt5c: MT5Client, pos) -> tuple[bool, str]:
         "type_filling": mt5.ORDER_FILLING_FOK,
     }
 
-    result = mt5c.order_send(request)
+    result = mt5.order_send(request)
     if result is None:
         return False, f"order_send returned None for {symbol} ticket={ticket}"
     if getattr(result, "retcode", None) != mt5.TRADE_RETCODE_DONE:

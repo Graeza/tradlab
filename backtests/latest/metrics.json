@@ -1,0 +1,23 @@
+{
+  "metrics": {
+    "start_equity": 10000.0,
+    "end_equity": 10882.662128076046,
+    "total_return": 0.0882662128076046,
+    "max_drawdown": -0.06906444809729569,
+    "n_trades": 115,
+    "win_rate": 0.43478260869565216,
+    "avg_trade_pnl": 7.675322852835167,
+    "profit_factor": 1.1404899493518967
+  },
+  "extra": {
+    "symbol": "Boom 300 Index",
+    "primary_tf": 5,
+    "tfs": [
+      5,
+      15,
+      16385,
+      16388
+    ],
+    "tag": "next_open_mvp"
+  }
+}

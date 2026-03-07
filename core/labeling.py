@@ -2,7 +2,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
-def make_labels_from_bars(bars: pd.DataFrame, symbol: str, timeframe: int, horizon_bars: int) -> pd.DataFrame:
+def make_labels_from_bars(bars: pd.DataFrame, symbol: str, timeframe: int, horizon_bars: int, eps: float = 0.0005) -> pd.DataFrame:
     """Create labels for bars where future close exists.
 
     y_class: +1 (BUY), -1 (SELL), 0 (flat)
@@ -17,7 +17,6 @@ def make_labels_from_bars(bars: pd.DataFrame, symbol: str, timeframe: int, horiz
 
     df["future_return"] = (df["future_close"] / df["close"]) - 1.0
     # classification label
-    eps = 0.00005
     df["y_class"] = np.where(df["future_return"] > eps, 1, np.where(df["future_return"] < -eps, -1, 0))
 
     out = pd.DataFrame({

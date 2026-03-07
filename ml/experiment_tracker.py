@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Mapping
+from datetime import datetime, timezone
 
 
 def append_jsonl(path: str | Path, record: Mapping[str, Any]) -> None:
@@ -37,8 +38,12 @@ def build_run_record(
     output_model_path: str | None = None,
     notes: str | None = None,
     utc_ts: str | None = None,
+
 ) -> dict[str, Any]:
     """Standard experiment run record schema."""
+    if utc_ts is None:
+        utc_ts = datetime.now(timezone.utc).isoformat()
+        
     return {
         "utc_ts": utc_ts,
         "model_type": model_type,

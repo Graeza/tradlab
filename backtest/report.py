@@ -11,6 +11,7 @@ from backtest.metrics import BacktestMetrics
 from ml.experiment_tracker import append_jsonl
 from config.settings import EXPERIMENT_LOG_PATH
 
+from datetime import datetime, timezone
 
 def save_backtest_outputs(
     out_dir: str,
@@ -37,7 +38,6 @@ def save_backtest_outputs(
     paths["metrics"] = metrics_path
     return paths
 
-
 def log_backtest_experiment(
     tag: str,
     symbol: str,
@@ -48,8 +48,11 @@ def log_backtest_experiment(
     artifacts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Append a single JSONL experiment record using the same tracker as ML training."""
+
     record = {
         "type": "backtest",
+        "utc_ts": datetime.now(timezone.utc).isoformat(),
+        "name": f"{symbol}_{tag}",
         "tag": tag,
         "symbol": symbol,
         "timeframes": [int(x) for x in timeframes],
@@ -58,4 +61,7 @@ def log_backtest_experiment(
         "metrics": asdict(metrics),
         "artifacts": artifacts or {},
     }
+    print("[EXP][BACKTEST] writing:", os.path.abspath(EXPERIMENT_LOG_PATH))
+    print("[EXP][BACKTEST] record type:", record.get("type"))
+    print("[EXP][BACKTEST] symbol:", record.get("symbol"))
     append_jsonl(EXPERIMENT_LOG_PATH, record)

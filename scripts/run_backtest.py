@@ -12,9 +12,30 @@ from __future__ import annotations
 
 import argparse
 import os
+
+import sys
+from datetime import datetime, timezone
+
+# Ensure project root (parent of /scripts) is on sys.path when running as a script.
+# Without this, `from core...` fails when executed as `python scripts/run_backtest.py`.
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# MT5 timeframe constants: prefer MetaTrader5 if available; fallback to core.mt5_worker constants.
+try:
+    import MetaTrader5 as _mt5
+except Exception:
+    _mt5 = None
+
+if _mt5 is not None:
+    mt5 = _mt5
+else:
+    from core.mt5_worker import MT5Client as mt5  # constants-only fallback
+
 import joblib
 
-import MetaTrader5 as mt5
+# import MetaTrader5 as mt5
 
 from config.settings import (
     DB_PATH,
@@ -33,13 +54,13 @@ from core.ensemble import EnsembleEngine
 from strategies.rsi_ema import RSIEMAStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
+from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 
 from backtest.data_source import load_bars_from_db
 from backtest.broker import SimBroker
 from backtest.risk import BacktestRiskManager
 from backtest.engine import run_backtest_next_open
 from backtest.report import save_backtest_outputs, log_backtest_experiment
-
 
 TF_MIN_TO_MT5 = {
     1: mt5.TIMEFRAME_M1,
@@ -60,7 +81,7 @@ TF_MIN_TO_MT5 = {
 
 
 def build_strategies():
-    strategies = [RSIEMAStrategy(), BreakoutStrategy()]
+    strategies = [RSIEMAStrategy(), BreakoutStrategy(),BoomSpikeTrendStrategy()]
 
     if USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
         bundle = joblib.load(ML_MODEL_PATH)
@@ -93,20 +114,46 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=BACKTEST_WARMUP_BARS)
     ap.add_argument("--out", type=str, default=BACKTEST_OUT_DIR)
     ap.add_argument("--tag", type=str, default="next_open_mvp")
+    ap.add_argument("--start", type=str, default="", help="Optional start date YYYY-MM-DD (UTC)")
+    ap.add_argument("--end", type=str, default="", help="Optional end date YYYY-MM-DD (UTC)")
     args = ap.parse_args()
 
-    timeframes = []
+    timeframes: list[int] = []
+    tf_values = set(TF_MIN_TO_MT5.values())
     for m in args.tfs:
-        if m not in TF_MIN_TO_MT5:
-            raise SystemExit(f"Unsupported timeframe minutes: {m}")
-        timeframes.append(TF_MIN_TO_MT5[m])
+        # Accept either minutes (5,15,60) OR raw MT5 timeframe constants (e.g., 16385, 16388)
+        if m in TF_MIN_TO_MT5:
+            timeframes.append(TF_MIN_TO_MT5[m])
+        elif m in tf_values:
+            timeframes.append(int(m))
+        else:
+            raise SystemExit(f"Unsupported timeframe (minutes or MT5 constant): {m}")
 
-    if args.primary_tf not in TF_MIN_TO_MT5:
-        raise SystemExit(f"Unsupported primary timeframe minutes: {args.primary_tf}")
-    primary_tf = TF_MIN_TO_MT5[args.primary_tf]
+    tf_values = set(TF_MIN_TO_MT5.values())
+    if args.primary_tf in TF_MIN_TO_MT5:
+        primary_tf = TF_MIN_TO_MT5[args.primary_tf]
+    elif args.primary_tf in tf_values:
+        primary_tf = int(args.primary_tf)
+    else:
+        raise SystemExit(f"Unsupported primary timeframe (minutes or MT5 constant): {args.primary_tf}")
+
+    # Optional time window
+    def _date_to_utc_s(s: str) -> int:
+        dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    time_min_s = _date_to_utc_s(args.start) if args.start.strip() else None
+    time_max_s = _date_to_utc_s(args.end) if args.end.strip() else None
 
     db = MarketDatabase(DB_PATH)
-    data = load_bars_from_db(db, args.symbol, timeframes=timeframes, limit=args.limit)
+    data = load_bars_from_db(
+        db,
+        args.symbol,
+        timeframes=timeframes,
+        limit=args.limit,
+        time_min_s=time_min_s,
+        time_max_s=time_max_s,
+    )
 
     strategies = build_strategies()
     ensemble = EnsembleEngine(

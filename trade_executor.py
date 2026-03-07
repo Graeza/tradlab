@@ -20,7 +20,7 @@ class TradeExecutor:
         self,
         mt5_client: MT5Client,
         enable_spread_filter: bool = True,
-        max_spread_points: int = 50,
+        max_spread_points: int = 200,
         enable_session_filter: bool = False,
         session_start_hour: int = 0,
         session_end_hour: int = 24,
@@ -29,6 +29,8 @@ class TradeExecutor:
         retry_delay_ms: int = 250,
         magic: int = 123456,
         comment: str = "ModularBot",
+        min_allowed_lot: float = 0.0,   # 0.0 = disabled
+        force_symbol_fixed_lot: bool = False,
     ):
         self.mt5 = mt5_client
 
@@ -45,6 +47,24 @@ class TradeExecutor:
 
         self.magic = int(magic)
         self.comment = str(comment)
+        self.min_allowed_lot = float(min_allowed_lot)
+        self.force_symbol_fixed_lot = bool(force_symbol_fixed_lot)
+
+    def _fixed_lot_for_symbol(self, symbol: str) -> Optional[float]:
+        s = symbol.lower()
+        if "boom 1000" in s or "boom 900" in s or "boom 500" in s or "boom 600" in s:
+            return 0.2
+        if "boom 300" in s:
+            return 0.5
+        return None
+
+    def _min_allowed_lot_for_symbol(self, symbol: str) -> float:
+        s = symbol.lower()
+        if "boom 1000" in s or "boom 900" in s or "boom 500" in s or "boom 600" in s:
+            return 0.2
+        if "boom 300" in s:
+            return 0.5
+        return 0.0  # disabled for other symbols
 
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = self.mt5.symbol_info(symbol)
@@ -101,6 +121,10 @@ class TradeExecutor:
         if not bool(getattr(info, "visible", True)):
             self.mt5.symbol_select(symbol, True)
 
+        info_spread = float(getattr(info, "spread", 0.0) or 0.0)
+        if info_spread > 0:
+            return int(round(info_spread))
+
         pt = float(getattr(info, "point", 0.0) or 0.0)
         if pt <= 0:
             return None
@@ -108,39 +132,163 @@ class TradeExecutor:
         spread = (float(tick.ask) - float(tick.bid)) / pt
         return int(round(spread))
 
+    # -------------------------
+    # Stop-level helpers
+    # -------------------------
+    def _stops_min_distance(self, info) -> float:
+        """Minimum allowed SL/TP distance from current price in *price units*.
+
+        MT5 provides trade_stops_level in POINTS; convert using point.
+        """
+        point = float(getattr(info, "point", 0.0) or 0.0)
+        stops_level_pts = float(getattr(info, "trade_stops_level", 0.0) or 0.0)
+        stop_level_alt = float(getattr(info, "stop_level", 0.0) or 0.0)  # some brokers
+
+        lvl_pts = max(stops_level_pts, stop_level_alt, 0.0)
+        if point <= 0:
+            return 0.0
+        if lvl_pts <= 0:
+            # conservative fallback if broker doesn't report
+            return point * 10.0
+        return lvl_pts * point
+
+    def _round_price(self, info, price: float) -> float:
+        digits = getattr(info, "digits", None)
+        if digits is None:
+            return float(price)
+        return round(float(price), int(digits))
+    
+    def _adjust_sl_tp_to_stops(self, info, action: str, price: float, sl, tp):
+        """Widen SL/TP to meet broker min stop distance if required."""
+        min_dist = self._stops_min_distance(info)
+        if min_dist <= 0:
+            return sl, tp
+
+        a = action.upper()
+
+        if sl is not None and float(sl) != 0.0:
+            sl = float(sl)
+            if a == "BUY":
+                if (price - sl) < min_dist:
+                    sl = price - min_dist
+            else:
+                if (sl - price) < min_dist:
+                    sl = price + min_dist
+
+        if tp is not None and float(tp) != 0.0:
+            tp = float(tp)
+            if a == "BUY":
+                if (tp - price) < min_dist:
+                    tp = price + min_dist
+            else:
+                if (price - tp) < min_dist:
+                    tp = price - min_dist
+
+        sl = self._round_price(info, sl) if sl not in (None, 0.0) else sl
+        tp = self._round_price(info, tp) if tp not in (None, 0.0) else tp
+        return sl, tp
+    
     def execute(self, params: dict[str, Any]):
         symbol = str(params["symbol"])
         action = str(params["action"]).upper()
         requested_lot = float(params["lot_size"])
-        sl = params.get("sl")
-        tp = params.get("tp")
-        deviation = int(params.get("deviation") or 20)
-
-        if not self._within_session():
-            return {"ok": False, "reason": "session_filter_blocked", "symbol": symbol}
-
-        if self.enable_spread_filter:
-            sp = self._spread_points(symbol)
-            if sp is None:
-                return {"ok": False, "reason": "spread_unknown", "symbol": symbol}
-            if sp > int(self.max_spread_points):
-                return {
-                    "ok": False,
-                    "reason": "spread_too_high",
-                    "symbol": symbol,
-                    "spread_points": sp,
-                    "max_spread_points": int(self.max_spread_points),
-                }
-
-        lot = self._normalize_volume(symbol, requested_lot)
-
-        order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
 
         tick = self.mt5.symbol_info_tick(symbol)
         if tick is None:
             return {"ok": False, "reason": "no_tick", "symbol": symbol}
 
+        # Treat 0 / None as "not set"
+        sl = params.get("sl")
+        tp = params.get("tp")
+        sl = None if sl in (None, 0, 0.0) else float(sl)
+        tp = None if tp in (None, 0, 0.0) else float(tp)
+
+        deviation = int(params.get("deviation") or 20)
+
+        # Extra spread gate (price-based) for synthetics (kept from your version)
+        spread_price = float(tick.ask) - float(tick.bid)
+        if "Boom" in symbol or "Crash" in symbol:
+            if spread_price > 3.0:   # adjust after observing
+                return {
+                    "ok": False,
+                    "reason": "spread_price_too_high",
+                    "symbol": symbol,
+                    "spread_price": spread_price,
+                }
+
+        if not self._within_session():
+            print(f"[EXECUTOR] BLOCK session_filter symbol={symbol}")
+            return {"ok": False, "reason": "session_filter_blocked", "symbol": symbol}
+
+        if self.enable_spread_filter:
+            sym_l = symbol.lower()
+
+            # Use price spread for Boom / Crash indices
+            if "boom" in sym_l or "crash" in sym_l:
+                tick_now = self.mt5.symbol_info_tick(symbol)
+                if tick_now is None:
+                    return {"ok": False, "reason": "no_tick", "symbol": symbol}
+
+                spread_price = float(tick_now.ask) - float(tick_now.bid)
+                max_spread_price = 3.0
+
+                if spread_price > max_spread_price:
+                    print(f"[EXECUTOR] BLOCK spread_price_too_high symbol={symbol} spread_price={spread_price}")
+                    return {
+                        "ok": False,
+                        "reason": "spread_price_too_high",
+                        "symbol": symbol,
+                        "spread_price": spread_price,
+                    }
+
+            else:
+                sp = self._spread_points(symbol)
+                if sp is None:
+                    return {"ok": False, "reason": "spread_unknown", "symbol": symbol}
+
+                if sp > int(self.max_spread_points):
+                    print(f"[EXECUTOR] BLOCK spread_too_high symbol={symbol} sp={sp} max={self.max_spread_points}")
+                    return {
+                        "ok": False,
+                        "reason": "spread_too_high",
+                        "symbol": symbol,
+                        "spread_points": sp,
+                        "max_spread_points": int(self.max_spread_points),
+                    }
+
+        # -------------------------
+        # LOT LOGIC (fixed)
+        # -------------------------
+        lot_req = requested_lot
+
+        # 1) Fixed lot override (checkbox)
+        if self.force_symbol_fixed_lot:
+            fixed = self._fixed_lot_for_symbol(symbol)
+            if fixed is not None:
+                lot_req = float(fixed)
+
+        # 2) Global minimum lot
+        if self.min_allowed_lot > 0:
+            lot_req = max(lot_req, float(self.min_allowed_lot))
+
+        # 3) Per-symbol minimum lot (Boom indices)
+        min_lot = self._min_allowed_lot_for_symbol(symbol)
+        if min_lot > 0:
+            lot_req = max(lot_req, float(min_lot))
+
+        lot = self._normalize_volume(symbol, lot_req)
+
+        order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
         price = float(tick.ask) if action == "BUY" else float(tick.bid)
+
+        info = self.mt5.symbol_info(symbol)
+        if info is None:
+            return {"ok": False, "reason": "no_symbol_info", "symbol": symbol}
+
+        # -------------------------
+        # STOP / LIMIT ENFORCEMENT
+        # -------------------------
+        sl, tp = self._adjust_sl_tp_to_stops(info, action, price, sl, tp)   
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -148,8 +296,8 @@ class TradeExecutor:
             "volume": float(lot),
             "type": int(order_type),
             "price": float(price),
-            "sl": float(sl) if sl is not None else 0.0,
-            "tp": float(tp) if tp is not None else 0.0,
+            "sl": sl,
+            "tp": tp,
             "deviation": int(deviation),
             "magic": int(self.magic),
             "comment": str(self.comment),
@@ -158,9 +306,16 @@ class TradeExecutor:
         attempts = 0
         while True:
             attempts += 1
-            result = self.mt5.order_send(request)
+            print(f"[EXECUTOR] SENDING request={request}")
+            result = mt5.order_send(request)
 
             retcode = getattr(result, "retcode", None)
+            comment = getattr(result, "comment", None)
+            request_id = getattr(result, "request_id", None)
+
+            print(f"[EXECUTOR] RESULT retcode={retcode} comment={comment} request_id={request_id}")
+            print(f"[EXECUTOR] last_error={self.mt5.last_error()}")
+
             if retcode is None:
                 return result
 
