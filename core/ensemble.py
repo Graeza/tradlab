@@ -12,11 +12,13 @@ class EnsembleEngine:
         strategies: List[Strategy],
         weights: Optional[Dict[str, float]] = None,
         min_conf: float = 0.55,
+        min_vote_gap: float = 0.10,
         regime_multipliers: Optional[Dict[str, Dict[str, float]]] = None,
     ):
         self.strategies = strategies
         self.weights = weights or {s.name: 1.0 for s in strategies}
-        self.min_conf = min_conf
+        self.min_conf = float(min_conf)
+        self.min_vote_gap = max(0.0, min(1.0, float(min_vote_gap)))
         self.regime_multipliers = regime_multipliers or {}
 
     def _effective_weight(self, strategy_name: str, regime: Optional[Dict[str, Any]]) -> tuple[float, float, float, float]:
@@ -102,11 +104,30 @@ class EnsembleEngine:
 
 
         if total == 0.0:
-            final = {"signal": "HOLD", "confidence": 0.0}
-        else:
             final = {
-                "signal": "BUY" if score > 0 else "SELL",
-                "confidence": min(1.0, abs(score) / total),
+                "signal": "HOLD",
+                "confidence": 0.0,
+                "vote_gap": 0.0,
+                "min_vote_gap": self.min_vote_gap,
+                "net_score": 0.0,
             }
+        else:
+            vote_gap = min(1.0, abs(score) / total)
+            if vote_gap < self.min_vote_gap or abs(score) < 1e-12:
+                final = {
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "vote_gap": vote_gap,
+                    "min_vote_gap": self.min_vote_gap,
+                    "net_score": score,
+                }
+            else:
+                final = {
+                    "signal": "BUY" if score > 0 else "SELL",
+                    "confidence": vote_gap,
+                    "vote_gap": vote_gap,
+                    "min_vote_gap": self.min_vote_gap,
+                    "net_score": score,
+                }
 
         return final, outputs

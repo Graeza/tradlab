@@ -1,16 +1,16 @@
 {
   "metrics": {
     "start_equity": 10000.0,
-    "end_equity": 10704.270240749154,
-    "total_return": 0.07042702407491541,
-    "max_drawdown": -0.026754066804871454,
-    "n_trades": 423,
-    "win_rate": 0.4928909952606635,
-    "avg_trade_pnl": 1.6566697850089669,
-    "profit_factor": 1.156380545537008
+    "end_equity": 10000.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0,
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "avg_trade_pnl": 0.0,
+    "profit_factor": null
   },
   "extra": {
-    "symbol": "Boom 1000 Index",
+    "symbol": "Boom 300 Index",
     "primary_tf": 5,
     "tfs": [
       5,
@@ -18,6 +18,55 @@
       16385,
       16388
     ],
-    "tag": "next_open_mvp"
+    "tag": "next_open_mvp",
+    "strategy_settings": {
+      "use_rsi": false,
+      "use_breakout": true,
+      "use_ml": false,
+      "use_boom": false,
+      "weights": {
+        "RSI_EMA": 1.0,
+        "BREAKOUT": 1.0,
+        "ML": 1.2,
+        "BOOM_SPIKE_TREND": 1.3
+      },
+      "ensemble_min_conf": 0.55,
+      "ensemble_min_vote_gap": 0.1
+    },
+    "risk_settings": {
+      "max_risk_pct": 0.75,
+      "min_confidence": 0.55,
+      "sl_atr_mult": 2.5,
+      "tp_rr": 1.8,
+      "fallback_sl_pct": 0.003,
+      "max_spread_points": 10000,
+      "base_deviation_points": 30
+    },
+    "execution_guard": {
+      "allow_new_trades": true,
+      "blocked_symbols": [
+        "Boom 300 Index"
+      ],
+      "enable_session_filter": false,
+      "session_start_hour": 0,
+      "session_end_hour": 24,
+      "allow_weekends": true,
+      "enable_spread_filter": true,
+      "exec_max_spread": 200,
+      "force_fixed_lot": true,
+      "fixed_sl_tp": true,
+      "sl_tp_offset": 10.0,
+      "enable_trailing_stop": true,
+      "trailing_trigger_rr": 1.0,
+      "trailing_distance_rr": 0.5,
+      "trailing_step_rr": 0.1,
+      "max_retries": 0,
+      "retry_delay_ms": 250,
+      "notes": [
+        "retries and retry_delay_ms are informational only in deterministic backtests",
+        "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
+        "base_deviation_points is informational only in backtests"
+      ]
+    }
   }
 }

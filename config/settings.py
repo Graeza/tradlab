@@ -46,6 +46,7 @@ BACKTEST_OUT_DIR = "backtests/latest"
 
 # --- Ensemble ---
 ENSEMBLE_MIN_CONF = 0.55
+ENSEMBLE_MIN_VOTE_GAP = 0.10
 STRATEGY_WEIGHTS = {
     "RSI_EMA": 1.0,
     "BREAKOUT": 1.0,

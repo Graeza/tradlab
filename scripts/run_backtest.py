@@ -6,18 +6,19 @@ Example:
 Notes:
   - Timeframes are in minutes for CLI convenience. They are mapped to MT5 timeframe constants.
   - Data source is the local SQLite DB (DB_PATH). Make sure you've already collected bars.
+  - This script can mirror a large subset of the live GUI settings into the backtest path.
+    Live-only controls such as retries, deviation, and real spread checks are accepted for
+    auditability but remain informational in OHLC-only backtests.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-
 import sys
 from datetime import datetime, timezone
 
 # Ensure project root (parent of /scripts) is on sys.path when running as a script.
-# Without this, `from core...` fails when executed as `python scripts/run_backtest.py`.
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -35,13 +36,12 @@ else:
 
 import joblib
 
-# import MetaTrader5 as mt5
-
 from config.settings import (
     DB_PATH,
     ML_MODEL_PATH,
     USE_ML_STRATEGY,
     ENSEMBLE_MIN_CONF,
+    ENSEMBLE_MIN_VOTE_GAP,
     STRATEGY_WEIGHTS,
     REGIME_WEIGHT_MULTIPLIERS,
     BACKTEST_STARTING_CASH,
@@ -80,10 +80,28 @@ TF_MIN_TO_MT5 = {
 }
 
 
-def build_strategies():
-    strategies = [RSIEMAStrategy(), BreakoutStrategy(),BoomSpikeTrendStrategy()]
+def _parse_bool(s: str | bool) -> bool:
+    if isinstance(s, bool):
+        return s
+    v = str(s).strip().lower()
+    return v in {"1", "true", "yes", "y", "on"}
 
-    if USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
+
+def _csv_to_set(s: str) -> set[str]:
+    return {x.strip() for x in str(s or "").split(",") if x.strip()}
+
+
+def build_strategies(*, use_rsi: bool = True, use_breakout: bool = True, use_ml: bool = USE_ML_STRATEGY, use_boom: bool = True):
+    strategies = []
+
+    if use_rsi:
+        strategies.append(RSIEMAStrategy())
+    if use_breakout:
+        strategies.append(BreakoutStrategy())
+    if use_boom:
+        strategies.append(BoomSpikeTrendStrategy())
+
+    if use_ml and USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
         bundle = joblib.load(ML_MODEL_PATH)
         if isinstance(bundle, dict) and "model" in bundle:
             strategies.append(
@@ -116,12 +134,51 @@ def main() -> None:
     ap.add_argument("--tag", type=str, default="next_open_mvp")
     ap.add_argument("--start", type=str, default="", help="Optional start date YYYY-MM-DD (UTC)")
     ap.add_argument("--end", type=str, default="", help="Optional end date YYYY-MM-DD (UTC)")
+    ap.add_argument("--min-vote-gap", type=float, default=ENSEMBLE_MIN_VOTE_GAP, help="Minimum normalized vote gap required to act")
+
+    # Strategy controls from GUI
+    ap.add_argument("--use-rsi", type=_parse_bool, default=True)
+    ap.add_argument("--use-breakout", type=_parse_bool, default=True)
+    ap.add_argument("--use-ml", type=_parse_bool, default=bool(USE_ML_STRATEGY))
+    ap.add_argument("--use-boom", type=_parse_bool, default=True)
+    ap.add_argument("--weight-rsi", type=float, default=float(STRATEGY_WEIGHTS.get("RSI_EMA", 1.0)))
+    ap.add_argument("--weight-breakout", type=float, default=float(STRATEGY_WEIGHTS.get("BREAKOUT", 1.0)))
+    ap.add_argument("--weight-ml", type=float, default=float(STRATEGY_WEIGHTS.get("ML", 1.0)))
+    ap.add_argument("--weight-boom", type=float, default=float(STRATEGY_WEIGHTS.get("BOOM_SPIKE_TREND", 1.0)))
+    ap.add_argument("--ensemble-min-conf", type=float, default=float(ENSEMBLE_MIN_CONF))
+
+    # Risk controls from GUI
+    ap.add_argument("--risk-max-pct", type=float, default=1.0)
+    ap.add_argument("--risk-min-conf", type=float, default=0.60)
+    ap.add_argument("--risk-sl-atr", type=float, default=2.0)
+    ap.add_argument("--risk-tp-rr", type=float, default=1.5)
+    ap.add_argument("--risk-fallback-sl", type=float, default=0.003)
+    ap.add_argument("--risk-max-spread", type=int, default=0)
+    ap.add_argument("--risk-base-dev", type=int, default=0)
+
+    # Execution-guard controls from GUI
+    ap.add_argument("--allow-new-trades", type=_parse_bool, default=True)
+    ap.add_argument("--blocked-symbols", type=str, default="")
+    ap.add_argument("--enable-session-filter", type=_parse_bool, default=False)
+    ap.add_argument("--session-start-hour", type=int, default=0)
+    ap.add_argument("--session-end-hour", type=int, default=24)
+    ap.add_argument("--allow-weekends", type=_parse_bool, default=False)
+    ap.add_argument("--enable-spread-filter", type=_parse_bool, default=False)
+    ap.add_argument("--exec-max-spread", type=int, default=0)
+    ap.add_argument("--force-fixed-lot", type=_parse_bool, default=False)
+    ap.add_argument("--fixed-sl-tp", type=_parse_bool, default=False)
+    ap.add_argument("--sl-tp-offset", type=float, default=0.0)
+    ap.add_argument("--enable-trailing-stop", type=_parse_bool, default=False)
+    ap.add_argument("--trailing-trigger-rr", type=float, default=1.0)
+    ap.add_argument("--trailing-distance-rr", type=float, default=0.5)
+    ap.add_argument("--trailing-step-rr", type=float, default=0.10)
+    ap.add_argument("--max-retries", type=int, default=0)
+    ap.add_argument("--retry-delay-ms", type=int, default=0)
     args = ap.parse_args()
 
     timeframes: list[int] = []
     tf_values = set(TF_MIN_TO_MT5.values())
     for m in args.tfs:
-        # Accept either minutes (5,15,60) OR raw MT5 timeframe constants (e.g., 16385, 16388)
         if m in TF_MIN_TO_MT5:
             timeframes.append(TF_MIN_TO_MT5[m])
         elif m in tf_values:
@@ -137,7 +194,6 @@ def main() -> None:
     else:
         raise SystemExit(f"Unsupported primary timeframe (minutes or MT5 constant): {args.primary_tf}")
 
-    # Optional time window
     def _date_to_utc_s(s: str) -> int:
         dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
@@ -155,16 +211,55 @@ def main() -> None:
         time_max_s=time_max_s,
     )
 
-    strategies = build_strategies()
+    strategies = build_strategies(
+        use_rsi=bool(args.use_rsi),
+        use_breakout=bool(args.use_breakout),
+        use_ml=bool(args.use_ml),
+        use_boom=bool(args.use_boom),
+    )
+    if not strategies:
+        raise SystemExit("No strategies enabled for backtest")
+
     ensemble = EnsembleEngine(
         strategies,
-        weights=STRATEGY_WEIGHTS,
-        min_conf=ENSEMBLE_MIN_CONF,
+        weights={
+            "RSI_EMA": float(args.weight_rsi),
+            "BREAKOUT": float(args.weight_breakout),
+            "ML": float(args.weight_ml),
+            "BOOM_SPIKE_TREND": float(args.weight_boom),
+        },
+        min_conf=float(args.ensemble_min_conf),
+        min_vote_gap=max(0.0, min(1.0, float(args.min_vote_gap))),
         regime_multipliers=REGIME_WEIGHT_MULTIPLIERS,
     )
 
-    broker = SimBroker(starting_cash=args.cash)
-    risk = BacktestRiskManager()
+    broker = SimBroker(
+        starting_cash=args.cash,
+        allow_new_trades=bool(args.allow_new_trades),
+        blocked_symbols=_csv_to_set(args.blocked_symbols),
+        enable_session_filter=bool(args.enable_session_filter),
+        session_start_hour=int(args.session_start_hour),
+        session_end_hour=int(args.session_end_hour),
+        allow_weekends=bool(args.allow_weekends),
+        enable_trailing_stop=bool(args.enable_trailing_stop),
+        trailing_trigger_rr=float(args.trailing_trigger_rr),
+        trailing_distance_rr=float(args.trailing_distance_rr),
+        trailing_step_rr=float(args.trailing_step_rr),
+    )
+    risk = BacktestRiskManager(
+        max_risk_pct=float(args.risk_max_pct),
+        min_confidence=float(args.risk_min_conf),
+        sl_atr_mult=float(args.risk_sl_atr),
+        tp_rr=float(args.risk_tp_rr),
+        fallback_sl_pct=float(args.risk_fallback_sl),
+        max_spread_points=int(args.risk_max_spread),
+        base_deviation_points=int(args.risk_base_dev),
+        force_symbol_fixed_lot=bool(args.force_fixed_lot),
+        boom_crash_fixed_sl_tp=bool(args.fixed_sl_tp),
+        boom_crash_sl_tp_offset=float(args.sl_tp_offset),
+        enable_spread_filter=bool(args.enable_spread_filter),
+        exec_max_spread_points=int(args.exec_max_spread),
+    )
 
     res = run_backtest_next_open(
         symbol=args.symbol,
@@ -178,12 +273,66 @@ def main() -> None:
         tag=args.tag,
     )
 
+    extra = {
+        "symbol": args.symbol,
+        "primary_tf": args.primary_tf,
+        "tfs": args.tfs,
+        "tag": args.tag,
+        "strategy_settings": {
+            "use_rsi": bool(args.use_rsi),
+            "use_breakout": bool(args.use_breakout),
+            "use_ml": bool(args.use_ml),
+            "use_boom": bool(args.use_boom),
+            "weights": {
+                "RSI_EMA": float(args.weight_rsi),
+                "BREAKOUT": float(args.weight_breakout),
+                "ML": float(args.weight_ml),
+                "BOOM_SPIKE_TREND": float(args.weight_boom),
+            },
+            "ensemble_min_conf": float(args.ensemble_min_conf),
+            "ensemble_min_vote_gap": float(args.min_vote_gap),
+        },
+        "risk_settings": {
+            "max_risk_pct": float(args.risk_max_pct),
+            "min_confidence": float(args.risk_min_conf),
+            "sl_atr_mult": float(args.risk_sl_atr),
+            "tp_rr": float(args.risk_tp_rr),
+            "fallback_sl_pct": float(args.risk_fallback_sl),
+            "max_spread_points": int(args.risk_max_spread),
+            "base_deviation_points": int(args.risk_base_dev),
+        },
+        "execution_guard": {
+            "allow_new_trades": bool(args.allow_new_trades),
+            "blocked_symbols": sorted(_csv_to_set(args.blocked_symbols)),
+            "enable_session_filter": bool(args.enable_session_filter),
+            "session_start_hour": int(args.session_start_hour),
+            "session_end_hour": int(args.session_end_hour),
+            "allow_weekends": bool(args.allow_weekends),
+            "enable_spread_filter": bool(args.enable_spread_filter),
+            "exec_max_spread": int(args.exec_max_spread),
+            "force_fixed_lot": bool(args.force_fixed_lot),
+            "fixed_sl_tp": bool(args.fixed_sl_tp),
+            "sl_tp_offset": float(args.sl_tp_offset),
+            "enable_trailing_stop": bool(args.enable_trailing_stop),
+            "trailing_trigger_rr": float(args.trailing_trigger_rr),
+            "trailing_distance_rr": float(args.trailing_distance_rr),
+            "trailing_step_rr": float(args.trailing_step_rr),
+            "max_retries": int(args.max_retries),
+            "retry_delay_ms": int(args.retry_delay_ms),
+            "notes": [
+                "retries and retry_delay_ms are informational only in deterministic backtests",
+                "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
+                "base_deviation_points is informational only in backtests",
+            ],
+        },
+    }
+
     artifacts = save_backtest_outputs(
         out_dir=args.out,
         equity_curve=res.equity_curve,
         fills=res.fills,
         metrics=res.metrics,
-        extra={"symbol": args.symbol, "primary_tf": args.primary_tf, "tfs": args.tfs, "tag": args.tag},
+        extra=extra,
     )
 
     log_backtest_experiment(
@@ -192,7 +341,14 @@ def main() -> None:
         timeframes=[int(x) for x in args.tfs],
         primary_tf=int(args.primary_tf),
         metrics=res.metrics,
-        params={"cash": args.cash, "warmup": args.warmup, "limit": args.limit},
+        params={
+            "cash": args.cash,
+            "warmup": args.warmup,
+            "limit": args.limit,
+            **extra["strategy_settings"],
+            **extra["risk_settings"],
+            **extra["execution_guard"],
+        },
         artifacts=artifacts,
     )
 

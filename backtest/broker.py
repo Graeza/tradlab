@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone, time as dtime
 from typing import Optional, Dict, Any
 
 
@@ -12,6 +13,7 @@ class Position:
     entry_price: float
     sl: Optional[float] = None
     tp: Optional[float] = None
+    anchor_sl: Optional[float] = None
 
 
 @dataclass
@@ -25,30 +27,80 @@ class Fill:
 
 
 class SimBroker:
-    """Very small deterministic broker.
+    """Deterministic broker used by the bar-close / next-open backtest.
 
-    Assumptions (MVP):
-      - Single position per symbol.
-      - Decisions happen on bar close, fills happen at **next bar open**.
-      - No partial fills.
-      - PnL uses (exit - entry) * qty for BUY, reversed for SELL.
-      - Optional commission_per_trade is applied on entry+exit.
+    This version mirrors several live execution-guard controls:
+      - allow_new_trades
+      - blocked_symbols
+      - session / weekend filters
+      - trailing-stop management (bar-based approximation)
     """
 
     def __init__(
         self,
         starting_cash: float = 10_000.0,
         commission_per_trade: float = 0.0,
+        allow_new_trades: bool = True,
+        blocked_symbols: Optional[set[str]] = None,
+        enable_session_filter: bool = False,
+        session_start_hour: int = 0,
+        session_end_hour: int = 24,
+        allow_weekends: bool = False,
+        enable_trailing_stop: bool = False,
+        trailing_trigger_rr: float = 1.0,
+        trailing_distance_rr: float = 0.5,
+        trailing_step_rr: float = 0.10,
     ):
         self.starting_cash = float(starting_cash)
         self.cash = float(starting_cash)
         self.equity = float(starting_cash)
         self.commission_per_trade = float(commission_per_trade)
 
+        self.allow_new_trades = bool(allow_new_trades)
+        self.blocked_symbols = set(blocked_symbols or set())
+        self.enable_session_filter = bool(enable_session_filter)
+        self.session_start_hour = int(session_start_hour)
+        self.session_end_hour = int(session_end_hour)
+        self.allow_weekends = bool(allow_weekends)
+        self.enable_trailing_stop = bool(enable_trailing_stop)
+        self.trailing_trigger_rr = float(trailing_trigger_rr)
+        self.trailing_distance_rr = float(trailing_distance_rr)
+        self.trailing_step_rr = max(0.0, float(trailing_step_rr))
+
         self.position: Optional[Position] = None
         self.pending_order: Optional[Dict[str, Any]] = None
         self.fills: list[Fill] = []
-        self.equity_curve: list[dict] = []  # {time, equity, cash, pos_side, pos_qty, pos_entry}
+        self.equity_curve: list[dict] = []
+
+    def _dt(self, time_s: int) -> datetime:
+        return datetime.fromtimestamp(int(time_s), tz=timezone.utc)
+
+    def _within_session(self, time_s: int) -> bool:
+        dt = self._dt(time_s)
+        if not self.allow_weekends and dt.weekday() >= 5:
+            return False
+
+        if not self.enable_session_filter:
+            return True
+
+        sh = max(0, min(23, int(self.session_start_hour)))
+        eh = max(0, min(24, int(self.session_end_hour)))
+        if sh == eh:
+            return True
+
+        t = dt.time()
+        start = dtime(sh, 0, 0)
+        end = dtime((eh % 24), 0, 0)
+        if sh < eh:
+            return start <= t < end
+        return t >= start or t < end
+
+    def can_open_new_trade(self, *, time_s: int, symbol: str) -> bool:
+        if not self.allow_new_trades:
+            return False
+        if symbol in self.blocked_symbols:
+            return False
+        return self._within_session(time_s)
 
     def queue_order(
         self,
@@ -78,7 +130,6 @@ class SimBroker:
             self.cash -= self.commission_per_trade
 
     def on_bar_open(self, time_s: int, symbol: str, open_price: float) -> None:
-        """Execute any queued order at the given open_price."""
         if not self.pending_order:
             return
         if self.pending_order.get("symbol") != symbol:
@@ -90,9 +141,6 @@ class SimBroker:
         tp = self.pending_order.get("tp")
         reason = str(self.pending_order.get("reason") or "signal")
 
-        # If there is an existing position:
-        # - Same side: ignore
-        # - Opposite side: close then open (flip)
         if self.position is not None:
             if self.position.side == side:
                 self.pending_order = None
@@ -100,21 +148,65 @@ class SimBroker:
             self.close_position(time_s, open_price, reason="flip")
 
         self._apply_commission()
+        sl_value = float(sl) if sl is not None else None
         self.position = Position(
             symbol=symbol,
             side=side,
             qty=qty,
             entry_price=float(open_price),
-            sl=float(sl) if sl is not None else None,
+            sl=sl_value,
             tp=float(tp) if tp is not None else None,
+            anchor_sl=sl_value,
         )
         self.fills.append(Fill(time_s=time_s, symbol=symbol, side=side, qty=qty, price=float(open_price), reason=reason))
         self.pending_order = None
 
+    def _maybe_update_trailing_stop(self, high: float, low: float, close: float) -> None:
+        if not self.enable_trailing_stop or self.position is None:
+            return
+
+        pos = self.position
+        entry = float(pos.entry_price)
+        anchor_sl = pos.anchor_sl
+        if anchor_sl is None:
+            return
+
+        initial_risk = abs(entry - float(anchor_sl))
+        if initial_risk <= 0:
+            return
+
+        if pos.side == "BUY":
+            best_price = max(float(high), float(close))
+            profit_dist = best_price - entry
+            if profit_dist <= 0 or profit_dist < self.trailing_trigger_rr * initial_risk:
+                return
+
+            candidate_sl = best_price - (self.trailing_distance_rr * initial_risk)
+            candidate_sl = max(candidate_sl, entry)
+            if pos.sl not in (None, 0, 0.0):
+                step_needed = self.trailing_step_rr * initial_risk
+                if step_needed > 0 and (candidate_sl - float(pos.sl)) < (step_needed - 1e-12):
+                    return
+            pos.sl = float(candidate_sl)
+            return
+
+        best_price = min(float(low), float(close))
+        profit_dist = entry - best_price
+        if profit_dist <= 0 or profit_dist < self.trailing_trigger_rr * initial_risk:
+            return
+
+        candidate_sl = best_price + (self.trailing_distance_rr * initial_risk)
+        candidate_sl = min(candidate_sl, entry)
+        if pos.sl not in (None, 0, 0.0):
+            step_needed = self.trailing_step_rr * initial_risk
+            if step_needed > 0 and (float(pos.sl) - candidate_sl) < (step_needed - 1e-12):
+                return
+        pos.sl = float(candidate_sl)
+
     def on_bar(self, time_s: int, symbol: str, high: float, low: float, close: float) -> None:
-        """Update equity and apply SL/TP exits using OHLC (intrabar approximation)."""
-        # intrabar SL/TP check (simple):
         if self.position is not None and self.position.symbol == symbol:
+            self._maybe_update_trailing_stop(high=float(high), low=float(low), close=float(close))
+
             pos = self.position
             exit_price = None
             exit_reason = None
@@ -126,7 +218,7 @@ class SimBroker:
                 elif pos.tp is not None and high >= pos.tp:
                     exit_price = float(pos.tp)
                     exit_reason = "takeprofit"
-            else:  # SELL
+            else:
                 if pos.sl is not None and high >= pos.sl:
                     exit_price = float(pos.sl)
                     exit_reason = "stop"
@@ -137,7 +229,6 @@ class SimBroker:
             if exit_price is not None:
                 self.close_position(time_s, exit_price, reason=exit_reason or "exit")
 
-        # mark-to-market equity at close
         self._mark_to_market(symbol, float(close))
         self.equity_curve.append(
             {
@@ -147,6 +238,8 @@ class SimBroker:
                 "pos_side": None if self.position is None else self.position.side,
                 "pos_qty": 0.0 if self.position is None else float(self.position.qty),
                 "pos_entry": None if self.position is None else float(self.position.entry_price),
+                "pos_sl": None if self.position is None else self.position.sl,
+                "pos_tp": None if self.position is None else self.position.tp,
             }
         )
 

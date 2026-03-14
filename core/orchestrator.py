@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Any
 
 from core.data_pipeline import DataPipeline
@@ -29,6 +29,15 @@ class Orchestrator:
         log: Optional[Callable[[str], None]] = None,
         allow_new_trades_getter: Optional[Callable[[], bool]] = None,
         decision_callback: Optional[Callable[[str, dict, list], None]] = None,
+        enforce_single_position_per_symbol: bool = True,
+        max_positions_per_symbol: int = 1,
+        max_total_open_positions: int = 0,
+        one_entry_per_closed_bar: bool = True,
+        enable_trade_cooldown: bool = False,
+        trade_cooldown_minutes: int = 0,
+        enable_max_daily_trades: bool = False,
+        max_daily_trades_per_symbol: int = 0,
+        max_daily_trades_total: int = 0,
     ):
         self.pipeline = pipeline
         self.ensemble = ensemble
@@ -46,9 +55,151 @@ class Orchestrator:
         self.current_session_id: int | None = None
         self.current_session_started_at: datetime | None = None
 
+        self.enforce_single_position_per_symbol = bool(enforce_single_position_per_symbol)
+        self.max_positions_per_symbol = max(1, int(max_positions_per_symbol))
+        self.max_total_open_positions = max(0, int(max_total_open_positions))
+        self.one_entry_per_closed_bar = bool(one_entry_per_closed_bar)
+        self.enable_trade_cooldown = bool(enable_trade_cooldown)
+        self.trade_cooldown_minutes = max(0, int(trade_cooldown_minutes))
+        self.enable_max_daily_trades = bool(enable_max_daily_trades)
+        self.max_daily_trades_per_symbol = max(0, int(max_daily_trades_per_symbol))
+        self.max_daily_trades_total = max(0, int(max_daily_trades_total))
+
+        self._last_entry_bar_by_symbol: dict[str, str] = {}
+        self._last_trade_time_by_symbol: dict[str, datetime] = {}
+        self._daily_trade_counts_by_symbol: dict[tuple[str, str], int] = {}
+        self._daily_trade_count_total: dict[str, int] = {}
+
     def set_trade_session(self, session_id: int | None, started_at: datetime | None = None) -> None:
         self.current_session_id = session_id
         self.current_session_started_at = started_at
+
+    def update_entry_policy(
+        self,
+        *,
+        enforce_single_position_per_symbol: bool | None = None,
+        max_positions_per_symbol: int | None = None,
+        max_total_open_positions: int | None = None,
+        one_entry_per_closed_bar: bool | None = None,
+        enable_trade_cooldown: bool | None = None,
+        trade_cooldown_minutes: int | None = None,
+        enable_max_daily_trades: bool | None = None,
+        max_daily_trades_per_symbol: int | None = None,
+        max_daily_trades_total: int | None = None,
+    ) -> None:
+        if enforce_single_position_per_symbol is not None:
+            self.enforce_single_position_per_symbol = bool(enforce_single_position_per_symbol)
+        if max_positions_per_symbol is not None:
+            self.max_positions_per_symbol = max(1, int(max_positions_per_symbol))
+        if max_total_open_positions is not None:
+            self.max_total_open_positions = max(0, int(max_total_open_positions))
+        if one_entry_per_closed_bar is not None:
+            self.one_entry_per_closed_bar = bool(one_entry_per_closed_bar)
+        if enable_trade_cooldown is not None:
+            self.enable_trade_cooldown = bool(enable_trade_cooldown)
+        if trade_cooldown_minutes is not None:
+            self.trade_cooldown_minutes = max(0, int(trade_cooldown_minutes))
+        if enable_max_daily_trades is not None:
+            self.enable_max_daily_trades = bool(enable_max_daily_trades)
+        if max_daily_trades_per_symbol is not None:
+            self.max_daily_trades_per_symbol = max(0, int(max_daily_trades_per_symbol))
+        if max_daily_trades_total is not None:
+            self.max_daily_trades_total = max(0, int(max_daily_trades_total))
+
+    def _utc_now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _latest_closed_bar_key(self, primary_df) -> str | None:
+        try:
+            if primary_df is None or len(primary_df.index) == 0:
+                return None
+            idx = primary_df.index[-2] if len(primary_df.index) >= 2 else primary_df.index[-1]
+            if hasattr(idx, "to_pydatetime"):
+                idx = idx.to_pydatetime()
+            if isinstance(idx, datetime):
+                if idx.tzinfo is None:
+                    idx = idx.replace(tzinfo=timezone.utc)
+                return idx.astimezone(timezone.utc).isoformat()
+            return str(idx)
+        except Exception:
+            return None
+
+    def _managed_open_positions(self, symbol: str | None = None) -> int:
+        try:
+            return int(self.executor.count_open_positions(symbol=symbol))
+        except Exception:
+            return 0
+
+    def _prune_old_trade_counts(self, keep_days: int = 7) -> None:
+        today = self._utc_now().date()
+        valid_days = {
+            (today - timedelta(days=offset)).isoformat()
+            for offset in range(max(1, int(keep_days)))
+        }
+        self._daily_trade_count_total = {
+            day: count for day, count in self._daily_trade_count_total.items() if day in valid_days
+        }
+        self._daily_trade_counts_by_symbol = {
+            key: count for key, count in self._daily_trade_counts_by_symbol.items() if key[0] in valid_days
+        }
+
+    def _entry_policy_block_reason(self, symbol: str, primary_df) -> str | None:
+        open_for_symbol = self._managed_open_positions(symbol=symbol)
+        if self.enforce_single_position_per_symbol and open_for_symbol >= max(1, int(self.max_positions_per_symbol)):
+            return f"max_positions_per_symbol ({open_for_symbol}/{self.max_positions_per_symbol})"
+
+        if self.max_total_open_positions > 0:
+            open_total = self._managed_open_positions(symbol=None)
+            if open_total >= int(self.max_total_open_positions):
+                return f"max_total_open_positions ({open_total}/{self.max_total_open_positions})"
+
+        bar_key = self._latest_closed_bar_key(primary_df)
+        if self.one_entry_per_closed_bar and bar_key and self._last_entry_bar_by_symbol.get(symbol) == bar_key:
+            return f"already_traded_closed_bar ({bar_key})"
+
+        now = self._utc_now()
+        if self.enable_trade_cooldown and self.trade_cooldown_minutes > 0:
+            last_trade_at = self._last_trade_time_by_symbol.get(symbol)
+            if last_trade_at is not None:
+                elapsed = (now - last_trade_at).total_seconds()
+                required = float(self.trade_cooldown_minutes) * 60.0
+                if elapsed < required:
+                    remaining = max(0, int((required - elapsed + 59) // 60))
+                    return f"cooldown_active ({remaining}m remaining)"
+
+        if self.enable_max_daily_trades:
+            self._prune_old_trade_counts()
+            today = now.date().isoformat()
+            per_symbol = self._daily_trade_counts_by_symbol.get((today, symbol), 0)
+            total = self._daily_trade_count_total.get(today, 0)
+
+            if self.max_daily_trades_per_symbol > 0 and per_symbol >= int(self.max_daily_trades_per_symbol):
+                return f"max_daily_trades_per_symbol ({per_symbol}/{self.max_daily_trades_per_symbol})"
+
+            if self.max_daily_trades_total > 0 and total >= int(self.max_daily_trades_total):
+                return f"max_daily_trades_total ({total}/{self.max_daily_trades_total})"
+
+        return None
+
+    def _record_successful_entry(self, symbol: str, primary_df, res: dict[str, Any]) -> None:
+        event_time = res.get("event_time")
+        now = event_time if isinstance(event_time, datetime) else self._utc_now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
+
+        self._last_trade_time_by_symbol[symbol] = now
+        bar_key = self._latest_closed_bar_key(primary_df)
+        if bar_key:
+            self._last_entry_bar_by_symbol[symbol] = bar_key
+
+        today = now.date().isoformat()
+        key = (today, symbol)
+        self._daily_trade_counts_by_symbol[key] = int(self._daily_trade_counts_by_symbol.get(key, 0)) + 1
+        self._daily_trade_count_total[today] = int(self._daily_trade_count_total.get(today, 0)) + 1
+        self._prune_old_trade_counts()
+
 
     def _serialize_exec_result(self, res: dict[str, Any]) -> str:
         try:
@@ -189,6 +340,11 @@ class Orchestrator:
                         self.log(f"[SAFE MODE] Entries blocked. Would have acted on {symbol}: {final_signal}")
                         continue
 
+                    entry_block = self._entry_policy_block_reason(symbol, primary_df)
+                    if entry_block:
+                        self.log(f"[ENTRY POLICY] {symbol}: blocked -> {entry_block}")
+                        continue
+
                     trade_params = self.risk.assess(final_signal, symbol)
                     if not trade_params:
                         self.log(f"[RISK] {symbol}: rejected")
@@ -200,6 +356,10 @@ class Orchestrator:
                     self.log(f"[EXEC] {symbol}: {res}")
 
                     if isinstance(res, dict) and res.get("ok"):
+                        try:
+                            self._record_successful_entry(symbol, primary_df, res)
+                        except Exception as e:
+                            self.log(f"[WARN] entry policy state update failed for {symbol}: {e}")
                         try:
                             self._log_open_trade(symbol, final_signal, res)
                         except Exception as e:

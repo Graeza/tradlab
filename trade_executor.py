@@ -495,7 +495,23 @@ class TradeExecutor:
                 })
         return events
 
-    #-------Close Helper Functions-------
+    #-------Position / Close Helper Functions-------
+    def _managed_positions(self, symbol: Optional[str] = None):
+        try:
+            pos = self.mt5.positions_get(symbol=symbol) if symbol else self.mt5.positions_get()
+        except TypeError:
+            pos = self.mt5.positions_get()
+        pos_list = list(pos) if pos else []
+        if symbol is not None:
+            pos_list = [p for p in pos_list if str(getattr(p, "symbol", "") or "") == str(symbol)]
+        return [p for p in pos_list if self._position_matches(p)]
+
+    def count_open_positions(self, symbol: Optional[str] = None) -> int:
+        return len(self._managed_positions(symbol=symbol))
+
+    def has_open_position(self, symbol: str) -> bool:
+        return self.count_open_positions(symbol=symbol) > 0
+
     def _positions(self):
         pos = self.mt5.positions_get()
         return list(pos) if pos else []

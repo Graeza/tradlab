@@ -32,7 +32,7 @@ from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from config.settings import (
     SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
     DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH,
-    ENSEMBLE_MIN_CONF, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS,
+    ENSEMBLE_MIN_CONF, ENSEMBLE_MIN_VOTE_GAP, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS,
 )
 
 from risk_manager import RiskManager
@@ -311,6 +311,13 @@ class MainWindow(QtWidgets.QMainWindow):
         strat_layout.addWidget(QtWidgets.QLabel("Ensemble Min Confidence"))
         strat_layout.addWidget(self.spin_min_conf)
 
+        self.spin_min_vote_gap = QtWidgets.QDoubleSpinBox()
+        self.spin_min_vote_gap.setRange(0.0, 1.0)
+        self.spin_min_vote_gap.setSingleStep(0.01)
+        self.spin_min_vote_gap.setValue(float(ENSEMBLE_MIN_VOTE_GAP))
+        strat_layout.addWidget(QtWidgets.QLabel("Minimum Vote Gap"))
+        strat_layout.addWidget(self.spin_min_vote_gap)
+
         btns = QtWidgets.QHBoxLayout()
         self.btn_apply_strat = QtWidgets.QPushButton("Apply Strategy Settings")
         btns.addWidget(self.btn_apply_strat)
@@ -370,60 +377,117 @@ class MainWindow(QtWidgets.QMainWindow):
         ex_tab = QtWidgets.QWidget()
         ex_layout = QtWidgets.QVBoxLayout(ex_tab)
 
-        ex_form = QtWidgets.QFormLayout()
-        ex_layout.addLayout(ex_form)
+        ex_columns = QtWidgets.QHBoxLayout()
+        ex_columns.setSpacing(16)
+        ex_layout.addLayout(ex_columns)
+
+        # ----- Left column -----
+        ex_left = QtWidgets.QVBoxLayout()
+        ex_columns.addLayout(ex_left, 1)
+
+        grp_exec_orders = QtWidgets.QGroupBox("Order Controls")
+        form_exec_orders = QtWidgets.QFormLayout(grp_exec_orders)
 
         self.ex_force_fixed_lot = QtWidgets.QCheckBox("Minimum lot size")
         self.ex_force_fixed_lot.setChecked(False)
-        ex_form.addRow(self.ex_force_fixed_lot)
-
+        form_exec_orders.addRow(self.ex_force_fixed_lot)
 
         self.ex_fixed_sl_tp = QtWidgets.QCheckBox("Use SL/TP offset")
         self.ex_fixed_sl_tp.setChecked(False)
-        ex_form.addRow(self.ex_fixed_sl_tp)
+        form_exec_orders.addRow(self.ex_fixed_sl_tp)
 
         self.ex_sl_tp_offset = QtWidgets.QDoubleSpinBox()
         self.ex_sl_tp_offset.setDecimals(2)
         self.ex_sl_tp_offset.setRange(0.0, 1_000_000.0)
         self.ex_sl_tp_offset.setValue(10.0)
-        ex_form.addRow("SL/TP offset (price)", self.ex_sl_tp_offset)
+        form_exec_orders.addRow("SL/TP offset (price)", self.ex_sl_tp_offset)
+
+        ex_left.addWidget(grp_exec_orders)
+
+        grp_exec_trailing = QtWidgets.QGroupBox("Trailing Stop")
+        form_exec_trailing = QtWidgets.QFormLayout(grp_exec_trailing)
+
+        self.ex_enable_trailing = QtWidgets.QCheckBox("Enable trailing stop")
+        self.ex_enable_trailing.setChecked(False)
+        form_exec_trailing.addRow(self.ex_enable_trailing)
+
+        self.ex_trailing_trigger_rr = QtWidgets.QDoubleSpinBox()
+        self.ex_trailing_trigger_rr.setDecimals(2)
+        self.ex_trailing_trigger_rr.setRange(0.10, 20.00)
+        self.ex_trailing_trigger_rr.setSingleStep(0.10)
+        self.ex_trailing_trigger_rr.setValue(1.00)
+        form_exec_trailing.addRow("Trail trigger (R)", self.ex_trailing_trigger_rr)
+
+        self.ex_trailing_distance_rr = QtWidgets.QDoubleSpinBox()
+        self.ex_trailing_distance_rr.setDecimals(2)
+        self.ex_trailing_distance_rr.setRange(0.05, 20.00)
+        self.ex_trailing_distance_rr.setSingleStep(0.05)
+        self.ex_trailing_distance_rr.setValue(0.50)
+        form_exec_trailing.addRow("Trail distance (R)", self.ex_trailing_distance_rr)
+
+        self.ex_trailing_step_rr = QtWidgets.QDoubleSpinBox()
+        self.ex_trailing_step_rr.setDecimals(2)
+        self.ex_trailing_step_rr.setRange(0.01, 10.00)
+        self.ex_trailing_step_rr.setSingleStep(0.01)
+        self.ex_trailing_step_rr.setValue(0.10)
+        form_exec_trailing.addRow("Trail step (R)", self.ex_trailing_step_rr)
+
+        ex_left.addWidget(grp_exec_trailing)
+
+        grp_exec_filters = QtWidgets.QGroupBox("Market Filters")
+        form_exec_filters = QtWidgets.QFormLayout(grp_exec_filters)
 
         self.ex_enable_spread = QtWidgets.QCheckBox("Enable spread filter")
         self.ex_enable_spread.setChecked(True)
-        ex_form.addRow(self.ex_enable_spread)
+        form_exec_filters.addRow(self.ex_enable_spread)
 
         self.ex_max_spread = QtWidgets.QSpinBox()
         self.ex_max_spread.setRange(0, 10_000)
         self.ex_max_spread.setValue(50)
-        ex_form.addRow("Max spread (points)", self.ex_max_spread)
+        form_exec_filters.addRow("Max spread (points)", self.ex_max_spread)
 
         self.ex_enable_session = QtWidgets.QCheckBox("Enable session filter (local time)")
         self.ex_enable_session.setChecked(False)
-        ex_form.addRow(self.ex_enable_session)
+        form_exec_filters.addRow(self.ex_enable_session)
 
         self.ex_session_start = QtWidgets.QSpinBox()
         self.ex_session_start.setRange(0, 23)
         self.ex_session_start.setValue(0)
-        ex_form.addRow("Session start hour", self.ex_session_start)
+        form_exec_filters.addRow("Session start hour", self.ex_session_start)
 
         self.ex_session_end = QtWidgets.QSpinBox()
         self.ex_session_end.setRange(0, 24)
         self.ex_session_end.setValue(24)
-        ex_form.addRow("Session end hour", self.ex_session_end)
+        form_exec_filters.addRow("Session end hour", self.ex_session_end)
 
         self.ex_allow_weekends = QtWidgets.QCheckBox("Allow weekends")
         self.ex_allow_weekends.setChecked(False)
-        ex_form.addRow(self.ex_allow_weekends)
+        form_exec_filters.addRow(self.ex_allow_weekends)
+
+        ex_left.addWidget(grp_exec_filters)
+
+        grp_exec_retry = QtWidgets.QGroupBox("Retries")
+        form_exec_retry = QtWidgets.QFormLayout(grp_exec_retry)
 
         self.ex_max_retries = QtWidgets.QSpinBox()
         self.ex_max_retries.setRange(0, 20)
         self.ex_max_retries.setValue(0)
-        ex_form.addRow("Max retries", self.ex_max_retries)
+        form_exec_retry.addRow("Max retries", self.ex_max_retries)
 
         self.ex_retry_delay = QtWidgets.QSpinBox()
         self.ex_retry_delay.setRange(0, 60_000)
         self.ex_retry_delay.setValue(250)
-        ex_form.addRow("Retry delay (ms)", self.ex_retry_delay)
+        form_exec_retry.addRow("Retry delay (ms)", self.ex_retry_delay)
+
+        ex_left.addWidget(grp_exec_retry)
+        ex_left.addStretch(1)
+
+        # ----- Right column -----
+        ex_right = QtWidgets.QVBoxLayout()
+        ex_columns.addLayout(ex_right, 1)
+
+        grp_exec_symbols = QtWidgets.QGroupBox("Symbol Controls")
+        form_exec_symbols = QtWidgets.QFormLayout(grp_exec_symbols)
 
         self.ex_block_symbols = QtWidgets.QListWidget()
         self.ex_block_symbols.setSelectionMode(
@@ -435,77 +499,65 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(str(sym))
             self.ex_block_symbols.addItem(item)
 
-        ex_form.addRow("Block trading on symbols", self.ex_block_symbols)
+        form_exec_symbols.addRow("Block trading on symbols", self.ex_block_symbols)
+
+        ex_right.addWidget(grp_exec_symbols)
+
+        grp_exec_positions = QtWidgets.QGroupBox("Position Limits")
+        form_exec_positions = QtWidgets.QFormLayout(grp_exec_positions)
 
         self.ex_single_pos_per_symbol = QtWidgets.QCheckBox("Only one open position per symbol")
         self.ex_single_pos_per_symbol.setChecked(True)
-        ex_form.addRow(self.ex_single_pos_per_symbol)
+        form_exec_positions.addRow(self.ex_single_pos_per_symbol)
 
         self.ex_max_pos_per_symbol = QtWidgets.QSpinBox()
         self.ex_max_pos_per_symbol.setRange(1, 100)
         self.ex_max_pos_per_symbol.setValue(1)
-        ex_form.addRow("Max positions per symbol", self.ex_max_pos_per_symbol)
+        form_exec_positions.addRow("Max positions per symbol", self.ex_max_pos_per_symbol)
 
         self.ex_max_total_positions = QtWidgets.QSpinBox()
         self.ex_max_total_positions.setRange(0, 500)
         self.ex_max_total_positions.setSpecialValueText("Disabled")
         self.ex_max_total_positions.setValue(0)
-        ex_form.addRow("Max total open positions", self.ex_max_total_positions)
+        form_exec_positions.addRow("Max total open positions", self.ex_max_total_positions)
 
         self.ex_one_entry_per_bar = QtWidgets.QCheckBox("Only one entry per closed bar")
         self.ex_one_entry_per_bar.setChecked(True)
-        ex_form.addRow(self.ex_one_entry_per_bar)
+        form_exec_positions.addRow(self.ex_one_entry_per_bar)
+
+        ex_right.addWidget(grp_exec_positions)
+
+        grp_exec_limits = QtWidgets.QGroupBox("Cooldown / Daily Limits")
+        form_exec_limits = QtWidgets.QFormLayout(grp_exec_limits)
 
         self.ex_enable_cooldown = QtWidgets.QCheckBox("Enable symbol cooldown")
         self.ex_enable_cooldown.setChecked(False)
-        ex_form.addRow(self.ex_enable_cooldown)
+        form_exec_limits.addRow(self.ex_enable_cooldown)
 
         self.ex_cooldown_minutes = QtWidgets.QSpinBox()
         self.ex_cooldown_minutes.setRange(0, 10_080)
         self.ex_cooldown_minutes.setSpecialValueText("Disabled")
         self.ex_cooldown_minutes.setValue(0)
-        ex_form.addRow("Cooldown (minutes)", self.ex_cooldown_minutes)
+        form_exec_limits.addRow("Cooldown (minutes)", self.ex_cooldown_minutes)
 
         self.ex_enable_daily_limits = QtWidgets.QCheckBox("Enable daily trade limits")
         self.ex_enable_daily_limits.setChecked(False)
-        ex_form.addRow(self.ex_enable_daily_limits)
+        form_exec_limits.addRow(self.ex_enable_daily_limits)
 
         self.ex_daily_trades_per_symbol = QtWidgets.QSpinBox()
         self.ex_daily_trades_per_symbol.setRange(0, 10_000)
         self.ex_daily_trades_per_symbol.setSpecialValueText("Disabled")
         self.ex_daily_trades_per_symbol.setValue(0)
-        ex_form.addRow("Max daily trades / symbol", self.ex_daily_trades_per_symbol)
+        form_exec_limits.addRow("Max daily trades / symbol", self.ex_daily_trades_per_symbol)
 
         self.ex_daily_trades_total = QtWidgets.QSpinBox()
         self.ex_daily_trades_total.setRange(0, 10_000)
         self.ex_daily_trades_total.setSpecialValueText("Disabled")
         self.ex_daily_trades_total.setValue(0)
-        ex_form.addRow("Max daily trades total", self.ex_daily_trades_total)
+        form_exec_limits.addRow("Max daily trades total", self.ex_daily_trades_total)
 
-        self.ex_enable_trailing = QtWidgets.QCheckBox("Enable trailing stop")
-        self.ex_enable_trailing.setChecked(False)
-        ex_form.addRow(self.ex_enable_trailing)
-
-        self.ex_trailing_trigger_rr = QtWidgets.QDoubleSpinBox()
-        self.ex_trailing_trigger_rr.setDecimals(2)
-        self.ex_trailing_trigger_rr.setRange(0.10, 20.00)
-        self.ex_trailing_trigger_rr.setSingleStep(0.10)
-        self.ex_trailing_trigger_rr.setValue(1.00)
-        ex_form.addRow("Trail trigger (R)", self.ex_trailing_trigger_rr)
-
-        self.ex_trailing_distance_rr = QtWidgets.QDoubleSpinBox()
-        self.ex_trailing_distance_rr.setDecimals(2)
-        self.ex_trailing_distance_rr.setRange(0.05, 20.00)
-        self.ex_trailing_distance_rr.setSingleStep(0.05)
-        self.ex_trailing_distance_rr.setValue(0.50)
-        ex_form.addRow("Trail distance (R)", self.ex_trailing_distance_rr)
-
-        self.ex_trailing_step_rr = QtWidgets.QDoubleSpinBox()
-        self.ex_trailing_step_rr.setDecimals(2)
-        self.ex_trailing_step_rr.setRange(0.01, 10.00)
-        self.ex_trailing_step_rr.setSingleStep(0.01)
-        self.ex_trailing_step_rr.setValue(0.10)
-        ex_form.addRow("Trail step (R)", self.ex_trailing_step_rr)
+        ex_right.addWidget(grp_exec_limits)
+        ex_right.addStretch(1)
 
         self.btn_apply_exec_guard = QtWidgets.QPushButton("Apply Execution Guard")
         ex_layout.addWidget(self.btn_apply_exec_guard)
@@ -593,7 +645,6 @@ class MainWindow(QtWidgets.QMainWindow):
         perf_layout.addWidget(self.lbl_bot_start_time)
         perf_layout.addWidget(self.lbl_session_duration)
         perf_layout.addWidget(self.lbl_bot_stop_time)
-
 
         self.tbl_perf = QtWidgets.QTableWidget(0, 5)
         self.tbl_perf.setHorizontalHeaderLabels(["Name", "N", "Win %", "Avg Ret", "Expectancy"])
@@ -804,6 +855,7 @@ class MainWindow(QtWidgets.QMainWindow):
             strategies,
             weights=STRATEGY_WEIGHTS,
             min_conf=ENSEMBLE_MIN_CONF,
+            min_vote_gap=ENSEMBLE_MIN_VOTE_GAP,
             regime_multipliers=REGIME_WEIGHT_MULTIPLIERS,
         )
         self.risk = RiskManager(self.mt5, )
@@ -1049,9 +1101,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "BOOM_SPIKE_TREND": float(self.w_boom.value()),
         }
         self.ensemble.min_conf = float(self.spin_min_conf.value())
+        self.ensemble.min_vote_gap = float(self.spin_min_vote_gap.value())
 
         self.log.write(
-            f"[UI] Applied strategies={[s.name for s in strategies]} weights={self.ensemble.weights} min_conf={self.ensemble.min_conf}"
+            f"[UI] Applied strategies={[s.name for s in strategies]} weights={self.ensemble.weights} "
+            f"min_conf={self.ensemble.min_conf} min_vote_gap={self.ensemble.min_vote_gap}"
         )
 
     # ---------- Experiments ----------
@@ -1474,13 +1528,15 @@ class MainWindow(QtWidgets.QMainWindow):
             # Preserve existing ensemble knobs if available
             prev_weights = getattr(getattr(self, "ensemble", None), "weights", None)
             prev_min_conf = getattr(getattr(self, "ensemble", None), "min_conf", None)
+            prev_min_vote_gap = getattr(getattr(self, "ensemble", None), "min_vote_gap", None)
 
             strategies = self._build_strategies(enabled=enabled)
 
             self.ensemble = EnsembleEngine(
                 strategies,
                 weights=prev_weights if prev_weights is not None else None,
-                min_conf=prev_min_conf if prev_min_conf is not None else None,
+                min_conf=prev_min_conf if prev_min_conf is not None else ENSEMBLE_MIN_CONF,
+                min_vote_gap=prev_min_vote_gap if prev_min_vote_gap is not None else ENSEMBLE_MIN_VOTE_GAP,
                 regime_multipliers=REGIME_WEIGHT_MULTIPLIERS,
             )
 
@@ -1594,8 +1650,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.executor.allow_weekends = bool(self.ex_allow_weekends.isChecked())
             self.executor.max_retries = int(self.ex_max_retries.value())
             self.executor.retry_delay_ms = int(self.ex_retry_delay.value())
+            
+            blocked_symbols = set()
+            for item in self.ex_block_symbols.selectedItems():
+                blocked_symbols.add(item.text().strip())
 
-            blocked_symbols = {item.text().strip() for item in self.ex_block_symbols.selectedItems() if item.text().strip()}
             self.executor.blocked_symbols = blocked_symbols
             self.executor.enable_trailing_stop = bool(self.ex_enable_trailing.isChecked())
             self.executor.trailing_trigger_rr = float(self.ex_trailing_trigger_rr.value())
@@ -1627,14 +1686,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.lbl_exec_guard_status.setText(
                 "spread={spread} (max {max_spread}pt)\n"
-                "session={session} ({start}-{end}) weekends={weekends}\n"
-                "retries={retries}@{delay}ms fixed_lot={fixed}\n"
+                "session={session} ({start}-{end})\n"
+                "weekends={weekends}\n"
+                "retries={retries}@{delay}ms\n"
+                "fixed_lot={fixed}\n"
                 "fixed_sl_tp={fixed_sl_tp} (offset {offset:g})\n"
-                "single_pos={single_pos} max/symbol={max_symbol} max_total={max_total}\n"
-                "one_per_bar={one_bar} cooldown={cooldown} ({cooldown_min}m)\n"
-                "daily_limits={daily_limits} per_symbol={daily_symbol} total={daily_total}\n"
                 "trailing={trailing} (trigger {trigger:.2f}R, distance {distance:.2f}R, step {step:.2f}R)\n"
-                "blocked_symbols={blocked}".format(
+                "blocked_symbols={blocked}"
+                .format(
                     spread=spread,
                     max_spread=self.executor.max_spread_points,
                     session=session,
@@ -1670,7 +1729,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"total={int(self.ex_daily_trades_total.value())}"
             )
         except Exception as e:
-            self.log.write(f"[EXEC GUARD] Apply failed: {e}")
+            self.log.write(f"[EXEC_GUARD] Apply failed: {e}")
 
     # ---------- UI refreshers ----------
     @QtCore.Slot()

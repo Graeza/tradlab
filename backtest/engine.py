@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import pandas as pd
 
@@ -27,7 +27,6 @@ def _precompute_features(bars_by_tf: Dict[int, pd.DataFrame]) -> Dict[int, pd.Da
             feats_by_tf[tf] = pd.DataFrame()
             continue
         feats = build_features(bars)
-        # keep dt if present for debugging but strategies typically ignore it
         feats_by_tf[tf] = feats.reset_index(drop=True)
     return feats_by_tf
 
@@ -60,7 +59,6 @@ def run_backtest_next_open(
 
     feats_by_tf = _precompute_features({tf: bars_by_tf.get(tf, pd.DataFrame()) for tf in timeframes})
 
-    # Index safety: we need i+1 open for next-open fills
     n = len(primary_bars)
     start_i = max(warmup_bars, 1)
     end_i = n - 2
@@ -69,9 +67,9 @@ def run_backtest_next_open(
 
     for i in range(start_i, end_i + 1):
         t = int(primary_bars.loc[i, "time"])
+        current_open = float(primary_bars.loc[i, "open"])
         next_open = float(primary_bars.loc[i + 1, "open"])
 
-        # Build data_by_tf as features up to time t
         data_by_tf: Dict[int, pd.DataFrame] = {}
         for tf in timeframes:
             df = feats_by_tf.get(tf)
@@ -80,26 +78,28 @@ def run_backtest_next_open(
         primary_df = data_by_tf.get(primary_tf, pd.DataFrame())
         regime = detect_regime(primary_df) if primary_df is not None and not primary_df.empty else {"trend": "UNKNOWN", "vol": "UNKNOWN"}
 
-        # 1) apply any queued order at current bar open (fills happen at open)
-        # We execute orders queued from the previous bar close.
-        broker.on_bar_open(time_s=t, symbol=symbol, open_price=float(primary_bars.loc[i, "open"]))
+        broker.on_bar_open(time_s=t, symbol=symbol, open_price=current_open)
 
-        # 2) compute decision at bar close (time t)
         final_signal, outputs = ensemble.run(data_by_tf, regime=regime)
         if isinstance(final_signal, dict):
             final_signal["regime"] = regime
 
-        # 3) queue next-open order based on final_signal (filled at next bar open)
         params = risk.assess(
             signal=final_signal,
             equity=broker.equity,
             entry_price=next_open,
             regime=regime,
+            symbol=symbol,
         )
-        if params is not None:
-            broker.queue_order(symbol=symbol, side=str(final_signal.get("signal")), qty=params.qty, sl=params.sl, tp=params.tp)
+        if params is not None and broker.can_open_new_trade(time_s=t, symbol=symbol):
+            broker.queue_order(
+                symbol=symbol,
+                side=str(final_signal.get("signal")),
+                qty=params.qty,
+                sl=params.sl,
+                tp=params.tp,
+            )
 
-        # 4) update broker on bar (SL/TP intrabar + mark-to-market)
         broker.on_bar(
             time_s=t,
             symbol=symbol,
