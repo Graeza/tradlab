@@ -15,7 +15,7 @@ class MLStrategy(Strategy):
 
     def __init__(
         self,
-        model,
+        model=None,
         feature_cols: Optional[List[str]] = None,
         *,
         model_version: Optional[str] = None,
@@ -29,20 +29,16 @@ class MLStrategy(Strategy):
         use_h1_meta: bool = True,
         h1_tf: int = 60,
         h1_sr_buffer_atr_mult: float = 0.50,
+        bundle_registry=None,
+        default_symbol: Optional[str] = None,
+        default_primary_tf: Optional[int] = None,
     ):
         """
         ML-backed strategy with feature-schema enforcement.
 
-        The core failure mode in production ML trading systems is schema drift:
-        columns added/removed/renamed, or ordering changes between training and live.
-
-        This strategy can run in a strict mode that will REFUSE to trade if:
-          - the live feature schema differs from what the model expects
-          - required features are missing
-          - features contain NaN/inf (unless fillna_value is provided)
-
-        H1 context is attached to meta/debug output only by default.
-        It is NOT fed into model inference unless your trained schema already includes it.
+        Supports either:
+          1) a fixed already-loaded model bundle, or
+          2) dynamic bundle resolution via bundle_registry using (symbol, timeframe)
         """
         self.model = model
         self.feature_cols = list(feature_cols) if feature_cols is not None else None
@@ -59,11 +55,15 @@ class MLStrategy(Strategy):
         self.h1_tf = int(h1_tf)
         self.h1_sr_buffer_atr_mult = float(h1_sr_buffer_atr_mult)
 
+        self.bundle_registry = bundle_registry
+        self.default_symbol = str(default_symbol) if default_symbol else None
+        self.default_primary_tf = int(default_primary_tf) if default_primary_tf is not None else None
+
         self._expected_cols = None  # type: Optional[List[str]]
         if self.feature_cols:
             self._expected_cols = list(self.feature_cols)
         else:
-            cols = getattr(self.model, "feature_names_in_", None)
+            cols = getattr(self.model, "feature_names_in_", None) if self.model is not None else None
             if cols is not None:
                 try:
                     self._expected_cols = [str(c) for c in list(cols)]
@@ -78,6 +78,54 @@ class MLStrategy(Strategy):
             return None
         payload = "\n".join([str(c) for c in cols]).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()[:12]
+
+    def _apply_bundle(self, bundle: dict, resolved_path: Optional[str] = None) -> None:
+        self.model = bundle.get("model")
+        self.feature_cols = list(bundle.get("feature_cols") or []) or None
+        self.model_version = bundle.get("model_version") or bundle.get("version")
+        self.schema_version = int(bundle.get("schema_version", 1))
+        self.strict_schema = bool(bundle.get("strict_schema", True))
+        self.class_to_signal = bundle.get("class_to_signal")
+        self.fillna_value = bundle.get("fillna_value")
+        self.feature_set_version = (
+            int(bundle.get("feature_set_version"))
+            if bundle.get("feature_set_version") is not None
+            else None
+        )
+        self.feature_set_id = (
+            str(bundle.get("feature_set_id"))
+            if bundle.get("feature_set_id") is not None
+            else None
+        )
+
+        if self.feature_cols:
+            self._expected_cols = list(self.feature_cols)
+        else:
+            cols = getattr(self.model, "feature_names_in_", None) if self.model is not None else None
+            if cols is not None:
+                try:
+                    self._expected_cols = [str(c) for c in list(cols)]
+                except Exception:
+                    self._expected_cols = None
+            else:
+                self._expected_cols = None
+
+        self._expected_schema_id = self._schema_id(self._expected_cols) if self._expected_cols else None
+        self._resolved_model_path = resolved_path
+
+    def _resolve_runtime_bundle(self, context: Optional[Dict[str, Any]] = None) -> tuple[Optional[dict], Optional[str], Optional[str], Optional[int]]:
+        context = context or {}
+        symbol = context.get("symbol", self.default_symbol)
+        primary_tf = context.get("primary_tf", self.default_primary_tf)
+
+        if symbol is None or primary_tf is None:
+            return None, None, symbol, primary_tf
+
+        if self.bundle_registry is None:
+            return None, None, symbol, primary_tf
+
+        bundle, path = self.bundle_registry.get_bundle(str(symbol), int(primary_tf))
+        return bundle, path, str(symbol), int(primary_tf)
 
     def _infer_live_feature_cols(self, df: pd.DataFrame) -> List[str]:
         cols = []
@@ -130,8 +178,7 @@ class MLStrategy(Strategy):
             if c in df.columns:
                 return c
         return None
-
-    def _evaluate(self, data_by_tf: Dict[int, pd.DataFrame]):
+    def _evaluate(self, data_by_tf: Dict[int, pd.DataFrame], context: Optional[Dict[str, Any]] = None):
         df = next(iter(data_by_tf.values()))
         if df is None or df.empty:
             return {
@@ -139,6 +186,31 @@ class MLStrategy(Strategy):
                 "signal": "HOLD",
                 "confidence": 0.0,
                 "meta": {"reason": "no_data"},
+            }
+
+        # Dynamic per-symbol/per-timeframe model resolution
+        if self.bundle_registry is not None:
+            bundle, resolved_path, ctx_symbol, ctx_tf = self._resolve_runtime_bundle(context)
+            if not bundle or "model" not in bundle:
+                return {
+                    "name": self.name,
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "meta": {
+                        "reason": "no_model_bundle_for_context",
+                        "symbol": ctx_symbol,
+                        "primary_tf": ctx_tf,
+                        "resolved_model_path": resolved_path,
+                    },
+                }
+            self._apply_bundle(bundle, resolved_path=resolved_path)
+
+        if self.model is None:
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                "confidence": 0.0,
+                "meta": {"reason": "no_model_loaded"},
             }
 
         # DataFetcher already returns closed-bar data, so use the latest row directly.
@@ -389,3 +461,12 @@ class MLStrategy(Strategy):
                 "model_version": self.model_version,
             },
         }
+    
+    def evaluate(self, data_by_tf: Dict[int, pd.DataFrame], context: Optional[Dict[str, Any]] = None):
+        raw = self._evaluate(data_by_tf, context=context)
+        return StrategyResult(
+            name=str(raw.get("name", self.name)),
+            signal=Signal(str(raw.get("signal", "HOLD")).upper()),
+            confidence=float(raw.get("confidence", 0.0) or 0.0),
+            meta=dict(raw.get("meta", {}) or {}),
+        )

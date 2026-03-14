@@ -1,0 +1,71 @@
+{
+  "metrics": {
+    "start_equity": 10000.0,
+    "end_equity": 9975.189500000004,
+    "total_return": -0.0024810499999995406,
+    "max_drawdown": -0.003944533196676926,
+    "n_trades": 60,
+    "win_rate": 0.5833333333333334,
+    "avg_trade_pnl": -0.4135083333333379,
+    "profit_factor": 0.8015159999999978
+  },
+  "extra": {
+    "symbol": "Boom 300 Index",
+    "primary_tf": 5,
+    "tfs": [
+      5,
+      15,
+      16385,
+      16388
+    ],
+    "tag": "next_open_Boom_300_Index",
+    "ml_model_path": "models/ml_strategy.joblib",
+    "strategy_settings": {
+      "use_rsi": true,
+      "use_breakout": true,
+      "use_ml": true,
+      "use_boom": true,
+      "weights": {
+        "RSI_EMA": 1.0,
+        "BREAKOUT": 1.0,
+        "ML": 1.2,
+        "BOOM_SPIKE_TREND": 1.3
+      },
+      "ensemble_min_conf": 0.55,
+      "ensemble_min_vote_gap": 0.1
+    },
+    "risk_settings": {
+      "max_risk_pct": 0.75,
+      "min_confidence": 0.55,
+      "sl_atr_mult": 2.5,
+      "tp_rr": 1.8,
+      "fallback_sl_pct": 0.003,
+      "max_spread_points": 10000,
+      "base_deviation_points": 30
+    },
+    "execution_guard": {
+      "allow_new_trades": true,
+      "blocked_symbols": [],
+      "enable_session_filter": false,
+      "session_start_hour": 0,
+      "session_end_hour": 24,
+      "allow_weekends": true,
+      "enable_spread_filter": true,
+      "exec_max_spread": 200,
+      "force_fixed_lot": true,
+      "fixed_sl_tp": true,
+      "sl_tp_offset": 10.0,
+      "enable_trailing_stop": true,
+      "trailing_trigger_rr": 0.5,
+      "trailing_distance_rr": 0.5,
+      "trailing_step_rr": 0.1,
+      "max_retries": 0,
+      "retry_delay_ms": 0,
+      "notes": [
+        "retries and retry_delay_ms are informational only in deterministic backtests",
+        "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
+        "base_deviation_points is informational only in backtests"
+      ]
+    }
+  }
+}

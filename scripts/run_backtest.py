@@ -51,6 +51,7 @@ from config.settings import (
 
 from core.database import MarketDatabase
 from core.ensemble import EnsembleEngine
+from core.ml_model_registry import MLModelRegistry
 from strategies.rsi_ema import RSIEMAStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
@@ -93,6 +94,8 @@ def _csv_to_set(s: str) -> set[str]:
 
 def build_strategies(
     *,
+    symbol: str,
+    primary_tf: int,
     use_rsi: bool = True,
     use_breakout: bool = True,
     use_ml: bool = USE_ML_STRATEGY,
@@ -108,26 +111,23 @@ def build_strategies(
     if use_boom:
         strategies.append(BoomSpikeTrendStrategy())
 
-    chosen_ml_path = str(ml_model_path or ML_MODEL_PATH).strip()
+    chosen_ml_path = str(ml_model_path or "").strip() or None
 
-    if use_ml and USE_ML_STRATEGY and chosen_ml_path and os.path.exists(chosen_ml_path):
-        bundle = joblib.load(chosen_ml_path)
-        if isinstance(bundle, dict) and "model" in bundle:
-            strategies.append(
-                MLStrategy(
-                    bundle["model"],
-                    feature_cols=bundle.get("feature_cols"),
-                    model_version=bundle.get("model_version") or bundle.get("version"),
-                    schema_version=bundle.get("schema_version", 1),
-                    strict_schema=bundle.get("strict_schema", True),
-                    class_to_signal=bundle.get("class_to_signal"),
-                    fillna_value=bundle.get("fillna_value"),
-                    feature_set_version=bundle.get("feature_set_version"),
-                    feature_set_id=bundle.get("feature_set_id"),
-                )
+    if use_ml and USE_ML_STRATEGY:
+        registry = MLModelRegistry(
+            candidates_dir=os.path.join(PROJECT_ROOT, "models", "candidates"),
+            fallback_model_path=str(ML_MODEL_PATH),
+            explicit_override_path=chosen_ml_path,
+            log=print,
+        )
+        strategies.append(
+            MLStrategy(
+                model=None,
+                bundle_registry=registry,
+                default_symbol=str(symbol),
+                default_primary_tf=int(primary_tf),
             )
-        else:
-            strategies.append(MLStrategy(bundle))
+        )
 
     return strategies
 
@@ -223,6 +223,8 @@ def main() -> None:
     )
 
     strategies = build_strategies(
+        symbol=args.symbol,
+        primary_tf=args.primary_tf,
         use_rsi=bool(args.use_rsi),
         use_breakout=bool(args.use_breakout),
         use_ml=bool(args.use_ml),

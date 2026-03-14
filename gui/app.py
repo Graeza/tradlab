@@ -23,6 +23,7 @@ from core.data_pipeline import DataPipeline
 from core.ensemble import EnsembleEngine
 from core.orchestrator import Orchestrator
 from core.bot_controller import BotController
+from core.ml_model_registry import MLModelRegistry
 
 from strategies.rsi_ema import RSIEMAStrategy
 from strategies.breakout import BreakoutStrategy
@@ -267,7 +268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_use_breakout = QtWidgets.QCheckBox("Enable Breakout strategy")
         self.chk_use_breakout.setChecked(True)
         self.chk_use_ml = QtWidgets.QCheckBox("Enable ML strategy")
-        self.chk_use_ml.setChecked(bool(USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH)))
+        self.chk_use_ml.setChecked(bool(USE_ML_STRATEGY))
         self.chk_use_boom = QtWidgets.QCheckBox("Enable Boom Spike/Trend strategy")
         self.chk_use_boom.setChecked(True)
 
@@ -700,6 +701,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_final = QtWidgets.QLabel("Final: —")
         dbg_layout.addWidget(self.lbl_final)
 
+        self.lbl_debug_ml_model = QtWidgets.QLabel("Resolved ML model: —")
+        self.lbl_debug_ml_model.setWordWrap(True)
+        self.lbl_debug_ml_model.setStyleSheet("color: gray;")
+        dbg_layout.addWidget(self.lbl_debug_ml_model)
+
         self.tbl_debug = QtWidgets.QTableWidget(0, 5)
         self.tbl_debug.setHorizontalHeaderLabels(["Strategy", "Signal", "Confidence", "Eff W", "Meta"])
         header = self.tbl_debug.horizontalHeader()
@@ -1074,6 +1080,22 @@ class MainWindow(QtWidgets.QMainWindow):
             return [sym] if sym else []
         return list(SYMBOL_LIST)
 
+    def _blocked_symbols_set(self) -> set[str]:
+        out: set[str] = set()
+        try:
+            if not hasattr(self, "ex_block_symbols") or self.ex_block_symbols is None:
+                return out
+
+            for i in range(self.ex_block_symbols.count()):
+                item = self.ex_block_symbols.item(i)
+                if item is not None and item.isSelected():
+                    sym = item.text().strip()
+                    if sym:
+                        out.add(sym)
+        except Exception:
+            pass
+        return out
+
     def _set_backtest_buttons_enabled(self, enabled: bool) -> None:
         self.btn_run_backtest.setEnabled(enabled)
         if hasattr(self, "btn_audit_data_gaps"):
@@ -1194,6 +1216,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bt_use_candidate_model.setChecked(True)
         self.log.write(f"[EXP] Backtest model path set -> {model_path}")
 
+    def _resolve_debug_ml_model_path(self, symbol: str) -> str:
+        try:
+            if not getattr(self, "ensemble", None):
+                return "—"
+
+            for s in getattr(self.ensemble, "strategies", []):
+                if getattr(s, "name", "") == "ML":
+                    registry = getattr(s, "bundle_registry", None)
+                    if registry is None:
+                        return str(getattr(s, "_resolved_model_path", "") or ML_MODEL_PATH or "—")
+
+                    path = registry.resolve_path(str(symbol), int(PRIMARY_TIMEFRAME))
+                    return str(path or "No model resolved")
+            return "ML strategy not active"
+        except Exception as e:
+            return f"Resolve failed: {e}"
+
     # ---------- Strategy building / hot updates ----------
     def _build_strategies(self, enabled: Optional[dict] = None):
         enabled = enabled or {
@@ -1211,28 +1250,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if enabled.get("BoomSpikeTrendStrategy", True):
             strategies.append(BoomSpikeTrendStrategy())
 
-        if enabled.get("MLStrategy", True) and USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
+        if enabled.get("MLStrategy", True) and USE_ML_STRATEGY:
             try:
-                bundle = joblib.load(ML_MODEL_PATH)
-                if isinstance(bundle, dict) and "model" in bundle:
-                    strategies.append(
-                        MLStrategy(
-                            bundle["model"],
-                            feature_cols=bundle.get("feature_cols"),
-                            model_version=bundle.get("model_version") or bundle.get("version"),
-                            schema_version=bundle.get("schema_version", 1),
-                            strict_schema=bundle.get("strict_schema", True),
-                            class_to_signal=bundle.get("class_to_signal"),
-                            fillna_value=bundle.get("fillna_value"),
-                        )
+                registry = MLModelRegistry(
+                    candidates_dir=ML_CANDIDATES_DIR,
+                    fallback_model_path=ML_MODEL_PATH,
+                    log=self.log.write,
+                )
+                strategies.append(
+                    MLStrategy(
+                        model=None,
+                        bundle_registry=registry,
+                        default_primary_tf=int(PRIMARY_TIMEFRAME),
                     )
-                else:
-                    strategies.append(MLStrategy(bundle))
-                self.log.write(f"[ML] Loaded model: {ML_MODEL_PATH}")
+                )
+                self.log.write(
+                    f"[ML] Dynamic registry enabled: candidates={ML_CANDIDATES_DIR} fallback={ML_MODEL_PATH}"
+                )
             except Exception as e:
-                self.log.write(f"[ML] Failed to load model: {e}")
+                self.log.write(f"[ML] Failed to initialize dynamic ML registry: {e}")
         else:
-            self.log.write("[ML] No model found — running without ML")
+            self.log.write("[ML] ML strategy disabled")
 
         return strategies
 
@@ -1262,6 +1300,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"[UI] Applied strategies={[s.name for s in strategies]} weights={self.ensemble.weights} "
             f"min_conf={self.ensemble.min_conf} min_vote_gap={self.ensemble.min_vote_gap}"
         )
+        self.render_debug()
 
     # ---------- Experiments ----------
 
@@ -1417,42 +1456,48 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------- Backtest ----------
     @QtCore.Slot()
     def run_backtest(self):
-        if getattr(self, "bt_thread", None) is not None:
-            self.log.write("[BACKTEST] Backtest already running")
-            return
+        try:
+            if getattr(self, "bt_thread", None) is not None:
+                self.log.write("[BACKTEST] Backtest already running")
+                return
 
-        symbols = self._backtest_target_symbols()
-        if not symbols:
-            self.lbl_bt_status.setText("Backtest: no symbol selected")
-            self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
-            return
+            symbols = self._backtest_target_symbols()
+            if not symbols:
+                self.lbl_bt_status.setText("Backtest: no symbol selected")
+                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                return
 
-        tfs = [x.strip() for x in self.bt_tfs.text().split(",") if x.strip()]
-        if not tfs:
-            self.lbl_bt_status.setText("Backtest: no timeframes specified")
-            self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
-            return
+            tfs = [x.strip() for x in self.bt_tfs.text().split(",") if x.strip()]
+            if not tfs:
+                self.lbl_bt_status.setText("Backtest: no timeframes specified")
+                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                return
 
-        primary_tf = str(self.bt_primary_tf.currentData())
+            primary_tf = str(self.bt_primary_tf.currentData())
 
-        ml_model_path_for_backtest = str(ML_MODEL_PATH)
-        if self.bt_use_candidate_model.isChecked():
-            candidate_path = (self.bt_ml_model_path.text() or "").strip()
-            if candidate_path:
-                ml_model_path_for_backtest = candidate_path
+            ml_model_path_for_backtest = str(ML_MODEL_PATH)
+            if self.bt_use_candidate_model.isChecked():
+                candidate_path = (self.bt_ml_model_path.text() or "").strip()
+                if candidate_path:
+                    ml_model_path_for_backtest = candidate_path
+
+            if self.bt_use_candidate_model.isChecked():
+                candidate_path = (self.bt_ml_model_path.text() or "").strip()
+                if not candidate_path:
+                    self.lbl_bt_status.setText("Backtest: candidate model override is enabled but no path is set")
+                    self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                    return
+                if not os.path.exists(candidate_path):
+                    self.lbl_bt_status.setText("Backtest: candidate model path not found")
+                    self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                    self.log.write(f"[BACKTEST] Candidate model path not found: {candidate_path}")
+                    return
                 
-        if self.bt_use_candidate_model.isChecked():
-            candidate_path = (self.bt_ml_model_path.text() or "").strip()
-            if not candidate_path:
-                self.lbl_bt_status.setText("Backtest: candidate model override is enabled but no path is set")
-                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
-                return
-            if not os.path.exists(candidate_path):
-                self.lbl_bt_status.setText("Backtest: candidate model path not found")
-                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
-                self.log.write(f"[BACKTEST] Candidate model path not found: {candidate_path}")
-                return
-    
+        except Exception as e:
+            self.log.write(f"[BACKTEST] GUI handler failed: {e}")
+            self.lbl_bt_status.setText(f"Backtest: GUI handler failed ({e})")
+            self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")  
+        
         base_cmd_common = [
             sys.executable,
             self._script_path("run_backtest.py"),
@@ -1463,10 +1508,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "--warmup", str(BACKTEST_WARMUP_BARS),
             "--ensemble-min-conf", str(float(self.spin_min_conf.value())),
             "--min-vote-gap", str(float(self.spin_min_vote_gap.value())),
-            "--use-rsi", str(self.chk_rsi.isChecked()),
-            "--use-breakout", str(self.chk_breakout.isChecked()),
-            "--use-ml", str(self.chk_ml.isChecked()),
-            "--use-boom", str(self.chk_boom.isChecked()),
+            "--use-rsi", str(self.chk_use_rsi.isChecked()),
+            "--use-breakout", str(self.chk_use_breakout.isChecked()),
+            "--use-ml", str(self.chk_use_ml.isChecked()),
+            "--use-boom", str(self.chk_use_boom.isChecked()),
             "--weight-rsi", str(float(self.w_rsi.value())),
             "--weight-breakout", str(float(self.w_breakout.value())),
             "--weight-ml", str(float(self.w_ml.value())),
@@ -1794,7 +1839,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "RSIEMAStrategy": self.chk_use_rsi.isChecked(),
                 "BreakoutStrategy": self.chk_use_breakout.isChecked(),
                 "MLStrategy": self.chk_use_ml.isChecked(),
-                "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),  # include this
+                "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
             }
 
             # Preserve existing ensemble knobs if available
@@ -1815,17 +1860,24 @@ class MainWindow(QtWidgets.QMainWindow):
             # Ensure orchestrator uses the new ensemble
             self.orch.ensemble = self.ensemble
 
-            self.log.write("[ML] Reloaded strategies/ensemble (ML model will be reloaded from ML_MODEL_PATH if present)")
-            self.lbl_train_status.setText("Training: model reloaded into bot (ready)")
+            self.log.write(
+                "[ML] Reloaded strategies/ensemble "
+                "(ML models will now resolve dynamically per symbol/timeframe)"
+            )
+            self.lbl_train_status.setText(
+                "Training: strategies reloaded, dynamic ML model resolution active"
+            )
 
             # Optional: refresh experiments so you immediately see the latest run
             if hasattr(self, "refresh_experiments"):
                 self.refresh_experiments()
+            if hasattr(self, "render_debug"):
+                self.render_debug()
 
         except Exception as e:
             self.log.write(f"[ML] Reload failed: {e}")
             self.lbl_train_status.setText(f"Training: reload failed ({e})")
-
+            
     # ---------- Bot control ----------
     @QtCore.Slot()
     def start_bot(self):
@@ -2181,7 +2233,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_final.setText("Final: —")
             self.tbl_debug.setRowCount(0)
             return
-
+        self.lbl_debug_ml_model.setText(
+            f"Resolved ML model: {self._resolve_debug_ml_model_path(symbol)}"
+        )
         final = payload.get("final") or {}
         outputs = payload.get("outputs") or []
 

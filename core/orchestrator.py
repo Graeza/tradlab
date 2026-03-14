@@ -297,8 +297,11 @@ class Orchestrator:
 
                     primary_df = data_by_tf.get(self.primary_tf)
                     regime = detect_regime(primary_df) if primary_df is not None else {"trend": "UNKNOWN", "vol": "UNKNOWN"}
-                    final_signal, outputs = self.ensemble.run(data_by_tf, regime=regime)
-
+                    final_signal, outputs = self.ensemble.run(data_by_tf, regime=regime,context={
+                            "symbol": symbol,
+                            "primary_tf": self.primary_tf,
+                        },
+                    )
                     # attach regime for downstream components
                     if isinstance(final_signal, dict):
                         final_signal["regime"] = regime

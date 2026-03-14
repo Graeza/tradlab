@@ -48,6 +48,7 @@ class EnsembleEngine:
         self,
         data_by_tf: dict[int, pd.DataFrame],
         regime: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[dict, List[StrategyOutput]]:
         outputs: List[StrategyOutput] = []
         score = 0.0
@@ -74,7 +75,12 @@ class EnsembleEngine:
                 outputs.append(StrategyResult(name=name, signal=Signal.HOLD, confidence=0.0, meta=meta).to_dict())
                 continue
 
-            res = s.evaluate(data_by_tf)
+            try:
+                res = s.evaluate(data_by_tf, context=context)
+            except TypeError:
+                # Backward compatibility for strategies that only accept (data_by_tf)
+                res = s.evaluate(data_by_tf)
+                
             name = str(res.name or getattr(s, "name", s.__class__.__name__))
 
             sig = res.signal.value
