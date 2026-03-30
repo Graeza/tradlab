@@ -50,6 +50,9 @@ class MLStrategy(Strategy):
         self.fillna_value = fillna_value
         self.feature_set_version = int(feature_set_version) if feature_set_version is not None else None
         self.feature_set_id = str(feature_set_id) if feature_set_id is not None else None
+        self.bundle_symbol = None
+        self.bundle_timeframe = None
+        self.bundle_horizon_bars = None
 
         self.use_h1_meta = bool(use_h1_meta)
         self.h1_tf = int(h1_tf)
@@ -58,6 +61,7 @@ class MLStrategy(Strategy):
         self.bundle_registry = bundle_registry
         self.default_symbol = str(default_symbol) if default_symbol else None
         self.default_primary_tf = int(default_primary_tf) if default_primary_tf is not None else None
+        self._resolved_model_path = None
 
         self._expected_cols = None  # type: Optional[List[str]]
         if self.feature_cols:
@@ -96,6 +100,12 @@ class MLStrategy(Strategy):
             str(bundle.get("feature_set_id"))
             if bundle.get("feature_set_id") is not None
             else None
+        )
+
+        self.bundle_symbol = str(bundle.get("symbol")) if bundle.get("symbol") is not None else None
+        self.bundle_timeframe = int(bundle.get("timeframe")) if bundle.get("timeframe") is not None else None
+        self.bundle_horizon_bars = (
+            int(bundle.get("label_horizon_bars")) if bundle.get("label_horizon_bars") is not None else None
         )
 
         if self.feature_cols:
@@ -196,6 +206,7 @@ class MLStrategy(Strategy):
         return None
 
     def _evaluate(self, data_by_tf: Dict[int, pd.DataFrame], context: Optional[Dict[str, Any]] = None):
+        context = context or {}
         df = next(iter(data_by_tf.values()))
         if df is None or df.empty:
             return {
@@ -206,6 +217,8 @@ class MLStrategy(Strategy):
             }
 
         # Dynamic per-symbol/per-timeframe model resolution
+        ctx_symbol = context.get("symbol", self.default_symbol)
+        ctx_tf = context.get("primary_tf", self.default_primary_tf)
         if self.bundle_registry is not None:
             bundle, resolved_path, ctx_symbol, ctx_tf = self._resolve_runtime_bundle(context)
             if not bundle or "model" not in bundle:
@@ -228,6 +241,34 @@ class MLStrategy(Strategy):
                 "signal": "HOLD",
                 "confidence": 0.0,
                 "meta": {"reason": "no_model_loaded"},
+            }
+
+        
+        if self.bundle_symbol is not None and ctx_symbol is not None and str(self.bundle_symbol) != str(ctx_symbol):
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                "confidence": 0.0,
+                "meta": {
+                    "reason": "bundle_symbol_mismatch",
+                    "bundle_symbol": self.bundle_symbol,
+                    "context_symbol": str(ctx_symbol),
+                    "resolved_model_path": getattr(self, "_resolved_model_path", None),
+                    "model_version": self.model_version,
+                },
+            }
+        if self.bundle_timeframe is not None and ctx_tf is not None and int(self.bundle_timeframe) != int(ctx_tf):
+            return {
+                "name": self.name,
+                "signal": "HOLD",
+                "confidence": 0.0,
+                "meta": {
+                    "reason": "bundle_timeframe_mismatch",
+                    "bundle_timeframe": int(self.bundle_timeframe),
+                    "context_primary_tf": int(ctx_tf),
+                    "resolved_model_path": getattr(self, "_resolved_model_path", None),
+                    "model_version": self.model_version,
+                },
             }
 
         # DataFetcher already returns closed-bar data, so use the latest row directly.
@@ -254,10 +295,16 @@ class MLStrategy(Strategy):
                 except Exception:
                     debug_df = df
 
-        meta_ctx = {}
+        meta_ctx = {
+            "resolved_model_path": getattr(self, "_resolved_model_path", None),
+            "bundle_symbol": self.bundle_symbol,
+            "bundle_timeframe": self.bundle_timeframe,
+            "bundle_horizon_bars": self.bundle_horizon_bars,
+        }
+
         try:
             last_dbg = debug_df.iloc[-1]
-            meta_ctx = {
+            meta_ctx.update({
                 "h1_trend": str(last_dbg.get("h1_trend", "neutral")).lower(),
                 "h1_support": last_dbg.get("h1_support"),
                 "h1_resistance": last_dbg.get("h1_resistance"),
@@ -265,9 +312,9 @@ class MLStrategy(Strategy):
                 "dist_to_h1_resistance": last_dbg.get("dist_to_h1_resistance"),
                 "near_h1_support": bool(last_dbg.get("near_h1_support", False)),
                 "near_h1_resistance": bool(last_dbg.get("near_h1_resistance", False)),
-            }
+            })
         except Exception:
-            meta_ctx = {}
+                pass
 
         # --- Feature set version gating ---
         if self.feature_set_version is not None:

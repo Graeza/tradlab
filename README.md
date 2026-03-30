@@ -30,6 +30,19 @@ pip install -r requirements.txt
 python -m core.main
 ```
 
+## ML: per-symbol / per-timeframe models
+- Candidate models are discovered from `models/candidates/<symbol_safe>/tf_<timeframe>/*.joblib`.
+- If no candidate exists, runtime fallback behavior is controlled by:
+  - `ML_REQUIRE_SYMBOL_MODEL` (if `True`, bot will HOLD when a symbol-specific model is missing),
+  - `ML_MODEL_PATH` (promoted fallback model),
+  - `ML_MIN_CANDIDATE_ACCURACY` (minimum `train_metrics.accuracy` for candidate selection).
+
+Train all symbols in one pass:
+
+```bash
+python -m scripts.train_all_symbols --strict-schema
+```
+
 ## Adding a new strategy
 1) Create `strategies/my_strategy.py` implementing `Strategy.evaluate(data_by_tf)`
 2) Add it in `core/main.py -> build_strategies()`

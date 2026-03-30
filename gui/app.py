@@ -33,7 +33,7 @@ from strategies.boom_sell_decay import BoomSellDecayStrategy
 
 from config.settings import (
     SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
-    DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, FEATURE_SET_VERSION,
+    DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, FEATURE_SET_VERSION, ML_REQUIRE_SYMBOL_MODEL, ML_MIN_CANDIDATE_ACCURACY,
     ENSEMBLE_MIN_CONF, ENSEMBLE_MIN_VOTE_GAP, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS, 
     DATA_QUALITY_OUT_DIR,BACKTEST_STARTING_CASH, BACKTEST_WARMUP_BARS, BACKTEST_OUT_DIR
 )
@@ -1329,6 +1329,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 registry = MLModelRegistry(
                     candidates_dir=ML_CANDIDATES_DIR,
                     fallback_model_path=ML_MODEL_PATH,
+                    require_symbol_model=ML_REQUIRE_SYMBOL_MODEL,
+                    min_candidate_accuracy=ML_MIN_CANDIDATE_ACCURACY,
                     log=self.log.write,
                 )
                 strategies.append(
@@ -1882,6 +1884,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def train_model(self):
+        symbol = self.train_symbol.currentText()
+        tf = int(self.train_timeframe.currentData())
         out_csv = (self.train_csv.text() or "").strip() or "dataset.csv"
         model_version = (self.train_model_version.text() or "").strip() or f"ml_{datetime.utcnow().strftime('%Y-%m-%d')}"
         schema_version = int(self.train_schema_version.value())
@@ -1904,6 +1908,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "--model-path", str(candidate_model_path),
             "--model-version", model_version,
             "--schema-version", str(schema_version),
+            "--symbol", symbol,
+            "--timeframe", str(tf),
+            "--horizon-bars", str(LABEL_HORIZON_BARS),
         ]
         if strict:
             cmd.append("--strict-schema")
@@ -1947,6 +1954,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "--model-path", str(candidate_model_path),
             "--model-version", model_version,
             "--schema-version", str(schema_version),
+            "--symbol", symbol,
+            "--timeframe", str(tf),
+            "--horizon-bars", str(LABEL_HORIZON_BARS),
         ]
         if strict:
             train_cmd.append("--strict-schema")

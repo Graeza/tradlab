@@ -84,7 +84,11 @@ def run_backtest_next_open(
 
         broker.on_bar_open(time_s=t, symbol=symbol, open_price=current_open)
 
-        final_signal, outputs = ensemble.run(data_by_tf, regime=regime)
+        final_signal, outputs = ensemble.run(data_by_tf, regime=regime, context={
+                "symbol": symbol,
+                "primary_tf": int(primary_tf),
+            },
+        )
         if isinstance(final_signal, dict):
             final_signal["regime"] = regime
 

@@ -34,6 +34,8 @@ FEATURE_SET_VERSION = 1
 USE_ML_STRATEGY = True
 ML_MODEL_PATH = "models/ml_strategy.joblib"
 ML_CANDIDATES_DIR = "models/candidates"
+ML_REQUIRE_SYMBOL_MODEL = True
+ML_MIN_CANDIDATE_ACCURACY = 0.0
 
 # --- ML Experiment tracking ---
 # Training script appends one JSON line per run.

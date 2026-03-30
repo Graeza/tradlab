@@ -31,11 +31,15 @@ class MLModelRegistry:
         candidates_dir: str,
         fallback_model_path: str,
         explicit_override_path: Optional[str] = None,
+        require_symbol_model: bool = False,
+        min_candidate_accuracy: float = 0.0,
         log=None,
     ):
         self.candidates_dir = str(candidates_dir)
         self.fallback_model_path = str(fallback_model_path)
         self.explicit_override_path = str(explicit_override_path or "").strip() or None
+        self.require_symbol_model = bool(require_symbol_model)
+        self.min_candidate_accuracy = max(0.0, min(1.0, float(min_candidate_accuracy)))
         self.log = log or (lambda *_args, **_kwargs: None)
         self._cache: Dict[str, dict] = {}
         self._resolved_path_cache: Dict[Tuple[str, int], Optional[str]] = {}
@@ -46,6 +50,22 @@ class MLModelRegistry:
 
     def _candidate_dir(self, symbol: str, timeframe: int) -> Path:
         return Path(self.candidates_dir) / _safe_fs_name(symbol) / f"tf_{int(timeframe)}"
+
+    def _score_candidate(self, path: Path) -> tuple[float, float]:
+        try:
+            loaded = joblib.load(str(path))
+            if not isinstance(loaded, dict):
+                return (float("-inf"), path.stat().st_mtime)
+            metrics = loaded.get("train_metrics") if isinstance(loaded.get("train_metrics"), dict) else {}
+            acc = metrics.get("accuracy")
+            if acc is None:
+                return (float("-inf"), path.stat().st_mtime)
+            acc = float(acc)
+            if acc < self.min_candidate_accuracy:
+                return (float("-inf"), path.stat().st_mtime)
+            return (acc, path.stat().st_mtime)
+        except Exception:
+            return (float("-inf"), path.stat().st_mtime)
 
     def _latest_candidate_path(self, symbol: str, timeframe: int) -> Optional[str]:
         d = self._candidate_dir(symbol, timeframe)
@@ -59,6 +79,21 @@ class MLModelRegistry:
         )
         return str(files[0]) if files else None
 
+    def _best_candidate_path(self, symbol: str, timeframe: int) -> Optional[str]:
+        d = self._candidate_dir(symbol, timeframe)
+        if not d.exists() or not d.is_dir():
+            return None
+
+        files = [p for p in d.glob("*.joblib") if p.is_file()]
+        if not files:
+            return None
+
+        best = max(files, key=self._score_candidate)
+        best_score = self._score_candidate(best)
+        if best_score[0] == float("-inf"):
+            return None
+        return str(best)
+
     def resolve_path(self, symbol: str, timeframe: int) -> Optional[str]:
         key = (str(symbol), int(timeframe))
         if key in self._resolved_path_cache:
@@ -69,10 +104,12 @@ class MLModelRegistry:
         if self.explicit_override_path and os.path.exists(self.explicit_override_path):
             path = self.explicit_override_path
         else:
-            candidate = self._latest_candidate_path(symbol, timeframe)
+            candidate = self._best_candidate_path(symbol, timeframe)
+            if not candidate:
+                candidate = self._latest_candidate_path(symbol, timeframe)
             if candidate and os.path.exists(candidate):
                 path = candidate
-            elif self.fallback_model_path and os.path.exists(self.fallback_model_path):
+            elif (not self.require_symbol_model) and self.fallback_model_path and os.path.exists(self.fallback_model_path):
                 path = self.fallback_model_path
 
         self._resolved_path_cache[key] = path

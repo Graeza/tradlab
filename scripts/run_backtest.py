@@ -34,11 +34,12 @@ if _mt5 is not None:
 else:
     from core.mt5_worker import MT5Client as mt5  # constants-only fallback
 
-import joblib
-
 from config.settings import (
     DB_PATH,
     ML_MODEL_PATH,
+    ML_CANDIDATES_DIR,
+    ML_REQUIRE_SYMBOL_MODEL,
+    ML_MIN_CANDIDATE_ACCURACY,
     USE_ML_STRATEGY,
     ENSEMBLE_MIN_CONF,
     ENSEMBLE_MIN_VOTE_GAP,
@@ -122,9 +123,11 @@ def build_strategies(
 
     if use_ml and USE_ML_STRATEGY:
         registry = MLModelRegistry(
-            candidates_dir=os.path.join(PROJECT_ROOT, "models", "candidates"),
+            candidates_dir=str(ML_CANDIDATES_DIR),
             fallback_model_path=str(ML_MODEL_PATH),
             explicit_override_path=chosen_ml_path,
+            require_symbol_model=bool(ML_REQUIRE_SYMBOL_MODEL),
+            min_candidate_accuracy=float(ML_MIN_CANDIDATE_ACCURACY),
             log=print,
         )
         strategies.append(

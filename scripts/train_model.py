@@ -33,6 +33,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--csv", default="dataset.csv", help="Path to dataset CSV exported by scripts/export_dataset.py")
     p.add_argument("--label-col", default="y_class", help="Label column name in the CSV (default: y_class)")
     p.add_argument("--model-path", default=str(ML_MODEL_PATH), help="Output path for joblib bundle")
+    p.add_argument("--symbol", default=None, help="Optional symbol metadata (validated in live loading if provided)")
+    p.add_argument("--timeframe", type=int, default=None, help="Optional timeframe metadata (validated in live loading if provided)")
+    p.add_argument("--horizon-bars", type=int, default=None, help="Optional label horizon metadata (validated in live loading if provided)")
     p.add_argument("--model-version", default=None, help="String model version tag (e.g. ml_v3_2026-03-02)")
     p.add_argument("--schema-version", type=int, default=1, help="Integer schema version (bump when feature set changes)")
     p.add_argument("--strict-schema", action="store_true", help="If set, bot will refuse to trade on schema drift")
@@ -79,6 +82,9 @@ def main() -> None:
     # --- Feature set versioning metadata (optional but recommended) ---
     feature_set_version = None
     feature_set_id = None
+    bundle_symbol = str(args.symbol).strip() if args.symbol is not None else None
+    bundle_timeframe = int(args.timeframe) if args.timeframe is not None else None
+    bundle_horizon_bars = int(args.horizon_bars) if args.horizon_bars is not None else None
     if "feature_set_version" in df.columns:
         # Enforce single feature version within a training dataset
         uniq = pd.unique(df["feature_set_version"].dropna())
@@ -92,6 +98,25 @@ def main() -> None:
             feature_set_id = str(uniq[0])
         elif len(uniq) > 1:
             raise SystemExit(f"Multiple feature_set_id values in dataset: {list(uniq[:5])} ...")
+
+    if bundle_symbol is None and "symbol" in df.columns:
+        uniq = pd.unique(df["symbol"].dropna())
+        if len(uniq) == 1:
+            bundle_symbol = str(uniq[0])
+        elif len(uniq) > 1:
+            raise SystemExit(f"Multiple symbol values in dataset: {list(uniq[:5])} ...")
+    if bundle_timeframe is None and "timeframe" in df.columns:
+        uniq = pd.unique(df["timeframe"].dropna())
+        if len(uniq) == 1:
+            bundle_timeframe = int(uniq[0])
+        elif len(uniq) > 1:
+            raise SystemExit(f"Multiple timeframe values in dataset: {list(map(int, uniq[:10]))} ...")
+    if bundle_horizon_bars is None and "label_horizon_bars" in df.columns:
+        uniq = pd.unique(df["label_horizon_bars"].dropna())
+        if len(uniq) == 1:
+            bundle_horizon_bars = int(uniq[0])
+        elif len(uniq) > 1:
+            raise SystemExit(f"Multiple label_horizon_bars values in dataset: {list(map(int, uniq[:10]))} ...")
 
     if args.label_col not in df.columns:
         raise SystemExit(f"Label column '{args.label_col}' not found in CSV. Columns: {list(df.columns)[:20]}...")
@@ -190,6 +215,9 @@ def main() -> None:
         "schema_version": int(args.schema_version),
         "feature_set_version": feature_set_version,
         "feature_set_id": feature_set_id,
+        "symbol": bundle_symbol,
+        "timeframe": bundle_timeframe,
+        "label_horizon_bars": bundle_horizon_bars,
         "strict_schema": bool(args.strict_schema),
         "class_to_signal": class_to_signal,
         "fillna_value": fillna_value,  # None means: do not fill in live; reject NaN/inf instead

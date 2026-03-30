@@ -10,6 +10,7 @@ from core.database import MarketDatabase
 from core.data_pipeline import DataPipeline
 from core.ensemble import EnsembleEngine
 from core.orchestrator import Orchestrator
+from core.ml_model_registry import MLModelRegistry
 
 from strategies.rsi_ema import RSIEMAStrategy
 from strategies.breakout import BreakoutStrategy
@@ -17,7 +18,7 @@ from strategies.ml_strategy import MLStrategy
 
 from config.settings import (
     SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
-    DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH,
+    DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, ML_REQUIRE_SYMBOL_MODEL, ML_MIN_CANDIDATE_ACCURACY,
     ENSEMBLE_MIN_CONF, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS
 )
 
@@ -30,28 +31,25 @@ def build_strategies():
         RSIEMAStrategy(),
         BreakoutStrategy(),
     ]
-    if USE_ML_STRATEGY and os.path.exists(ML_MODEL_PATH):
-        bundle = joblib.load(ML_MODEL_PATH)
-        # Support either a raw sklearn estimator or a saved bundle
-        # like {"model": estimator, "feature_cols": [...], "class_to_signal": {...}}
-        if isinstance(bundle, dict) and "model" in bundle:
-            strategies.append(
-                MLStrategy(
-                    bundle["model"],
-                    feature_cols=bundle.get("feature_cols"),
-                    model_version=bundle.get("model_version") or bundle.get("version"),
-                    schema_version=bundle.get("schema_version", 1),
-                    strict_schema=bundle.get("strict_schema", True),
-                    class_to_signal=bundle.get("class_to_signal"),
-                    fillna_value=bundle.get("fillna_value"),
-                    feature_set_version=bundle.get("feature_set_version"),
-                    feature_set_id=bundle.get("feature_set_id"),
-                )
+
+    if USE_ML_STRATEGY:
+        registry = MLModelRegistry(
+            candidates_dir=ML_CANDIDATES_DIR,
+            fallback_model_path=ML_MODEL_PATH,
+            require_symbol_model=ML_REQUIRE_SYMBOL_MODEL,
+            min_candidate_accuracy=ML_MIN_CANDIDATE_ACCURACY,
+            log=print,
+        )
+        strategies.append(
+            MLStrategy(
+                model=None,
+                bundle_registry=registry,
+                default_primary_tf=int(PRIMARY_TIMEFRAME),
             )
-        else:
-            strategies.append(MLStrategy(bundle))
+        )
     else:
-        print("ML model not found — running without ML strategy.")
+        print("ML strategy disabled by configuration.")
+
     return strategies
 
 
