@@ -1388,6 +1388,36 @@ class MainWindow(QtWidgets.QMainWindow):
                     return rec[k]
             return None
 
+        def metric_percent(rec, pct_keys: tuple[str, ...], ratio_keys: tuple[str, ...]):
+            v = get_metric(rec, *pct_keys)
+            if v is not None:
+                try:
+                    return float(v)
+                except Exception:
+                    return v
+            r = get_metric(rec, *ratio_keys)
+            if r is None:
+                return None
+            try:
+                return float(r) * 100.0
+            except Exception:
+                return r
+
+        def format_cell(v):
+            if isinstance(v, bool):
+                return str(v)
+            if isinstance(v, (int, float)):
+                return f"{float(v):.4f}"
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return ""
+                try:
+                    return f"{float(s):.4f}"
+                except Exception:
+                    return s
+            return "" if v is None else str(v)
+
         def get_artifact_path(rec):
             arts = rec.get("artifacts")
             if isinstance(arts, dict):
@@ -1406,6 +1436,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 or ""
             )
 
+        def format_experiment_time(raw_ts):
+            ts = "" if raw_ts is None else str(raw_ts).strip()
+            if not ts:
+                return ""
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return f"{dt.strftime('%Y-%m-%d')} | {dt.strftime('%H:%M:%S')}"
+            except Exception:
+                return ts
+
         def sort_key(rec):
             return str(
                 rec.get("utc_ts")
@@ -1422,22 +1462,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tbl_exp.insertRow(r)
 
             rtype = str(rec.get("type") or "ml")
-            ts = str(
+            raw_ts = (
                 rec.get("utc_ts")
                 or rec.get("time")
                 or rec.get("timestamp")
                 or ""
             )
+            ts = format_experiment_time(raw_ts)
 
             if rtype == "backtest":
                 name = str(
                     rec.get("name")
                     or f"{rec.get('symbol', '')} [{rec.get('tag', '')}]".strip()
                 )
-                acc = get_metric(rec, "win_rate")
+                win_rate = get_metric(rec, "win_rate")
+                acc = (float(win_rate) * 100.0) if win_rate is not None else None
                 f1 = get_metric(rec, "profit_factor")
-                feat_ver = get_metric(rec, "total_return_pct")
-                feat_id = get_metric(rec, "max_drawdown_pct")
+                feat_ver = metric_percent(rec, ("total_return_pct",), ("total_return",))
+                feat_id = metric_percent(rec, ("max_drawdown_pct",), ("max_drawdown",))
                 model_path = str(get_artifact_path(rec))
             else:
                 name = str(
@@ -1449,13 +1491,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 acc = get_metric(rec, "accuracy", "acc")
                 f1 = get_metric(rec, "macro_f1", "f1_macro", "f1")
-                feat_ver = rec.get("feature_set_version") or rec.get("feature_version") or ""
-                feat_id = rec.get("feature_set_id") or rec.get("feature_id") or ""
+                feat_ver = metric_percent(rec, ("total_return_pct",), ("total_return",))
+                if feat_ver is None:
+                    feat_ver = rec.get("feature_set_version") or rec.get("feature_version") or ""
+                feat_id = metric_percent(rec, ("max_drawdown_pct",), ("max_drawdown",))
+                if feat_id is None:
+                    feat_id = rec.get("feature_set_id") or rec.get("feature_id") or ""
                 model_path = str(get_artifact_path(rec))
 
             vals = [rtype, ts, name, acc, f1, feat_ver, feat_id, model_path]
             for c, v in enumerate(vals):
-                item = QtWidgets.QTableWidgetItem("" if v is None else str(v))
+                item = QtWidgets.QTableWidgetItem(format_cell(v))
                 if c == 7:
                     item.setToolTip(str(v))
                 self.tbl_exp.setItem(r, c, item)
@@ -1580,6 +1626,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "--trailing-trigger-rr", str(float(self.ex_trailing_trigger_rr.value())),
             "--trailing-distance-rr", str(float(self.ex_trailing_distance_rr.value())),
             "--trailing-step-rr", str(float(self.ex_trailing_step_rr.value())),
+            "--max-retries", str(int(self.ex_max_retries.value())),
+            "--retry-delay-ms", str(int(self.ex_retry_delay.value())),
         ]
 
         if self.bt_start.text().strip():

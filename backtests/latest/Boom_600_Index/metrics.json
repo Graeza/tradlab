@@ -1,13 +1,13 @@
 {
   "metrics": {
     "start_equity": 10000.0,
-    "end_equity": 9987.911200000006,
-    "total_return": -0.0012088799999994126,
-    "max_drawdown": -0.008563398751407037,
-    "n_trades": 693,
-    "win_rate": 0.6219336219336219,
-    "avg_trade_pnl": -0.017444155844153784,
-    "profit_factor": 0.976929770992369
+    "end_equity": 10089.083599999933,
+    "total_return": 0.008908359999993287,
+    "max_drawdown": -0.005156924087593652,
+    "n_trades": 490,
+    "win_rate": 0.3824130879345603,
+    "avg_trade_pnl": 0.17740736196319037,
+    "profit_factor": 1.0967108444721672
   },
   "extra": {
     "symbol": "Boom 600 Index",
@@ -56,13 +56,13 @@
       "exec_max_spread": 200,
       "force_fixed_lot": true,
       "fixed_sl_tp": true,
-      "sl_tp_offset": 10.0,
-      "enable_trailing_stop": true,
+      "sl_tp_offset": 15.0,
+      "enable_trailing_stop": false,
       "trailing_trigger_rr": 0.5,
       "trailing_distance_rr": 0.5,
       "trailing_step_rr": 0.1,
       "max_retries": 0,
-      "retry_delay_ms": 0,
+      "retry_delay_ms": 250,
       "notes": [
         "retries and retry_delay_ms are informational only in deterministic backtests",
         "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
