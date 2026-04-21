@@ -132,9 +132,10 @@ class BacktestWorker(QtCore.QObject):
     line = QtCore.Signal(str)
     finished = QtCore.Signal(bool, str)  # (ok, message)
 
-    def __init__(self, cmd: list[str]):
+    def __init__(self, cmd: list[str], cwd: str | None = None):
         super().__init__()
         self.cmd = cmd
+        self.cwd = cwd
 
     @QtCore.Slot()
     def run(self):
@@ -146,6 +147,7 @@ class BacktestWorker(QtCore.QObject):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                cwd=self.cwd,
             )
             assert p.stdout is not None
             for ln in p.stdout:
@@ -1203,7 +1205,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.write("[BACKTEST] " + " ".join(cmd))
 
         self.bt_thread = QtCore.QThread(self)
-        self.bt_worker = BacktestWorker(cmd)
+        self.bt_worker = BacktestWorker(cmd, cwd=PROJECT_ROOT)
         self.bt_worker.moveToThread(self.bt_thread)
 
         self.bt_worker.line.connect(self.log.write)
@@ -1724,7 +1726,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_backtest_buttons_enabled(False)
 
         self.bt_thread = QtCore.QThread(self)
-        self.bt_worker = BacktestWorker(cmd)
+        self.bt_worker = BacktestWorker(cmd, cwd=PROJECT_ROOT)
         self.bt_worker.moveToThread(self.bt_thread)
 
         self.bt_worker.line.connect(self.log.write)
@@ -1788,7 +1790,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_backtest_buttons_enabled(False)
 
         self.bt_thread = QtCore.QThread(self)
-        self.bt_worker = BacktestWorker(cmd)
+        self.bt_worker = BacktestWorker(cmd, cwd=PROJECT_ROOT)
         self.bt_worker.moveToThread(self.bt_thread)
 
         self.bt_thread.started.connect(self.bt_worker.run)

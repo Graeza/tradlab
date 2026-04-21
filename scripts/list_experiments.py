@@ -51,7 +51,8 @@ def _load_default_log_path() -> str:
 
         return str(EXPERIMENT_LOG_PATH)
     except Exception:
-        return os.path.join("ml", "experiments", "experiments.jsonl")
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        return os.path.join(project_root, "ml", "experiments", "experiments.jsonl")
 
 
 def _iter_jsonl(path: str) -> Iterable[Dict[str, Any]]:

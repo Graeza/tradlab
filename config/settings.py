@@ -1,6 +1,14 @@
 from __future__ import annotations
+import os
 import MetaTrader5 as mt5
 import keyring as kr
+
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _project_path(*parts: str) -> str:
+    return os.path.join(PROJECT_ROOT, *parts)
 
 # --- Trading universe ---
 SYMBOL_LIST = [
@@ -24,7 +32,7 @@ PRIMARY_TIMEFRAME = mt5.TIMEFRAME_M5
 LOOP_SLEEP_SECONDS = 300
 
 # --- DB ---
-DB_PATH = "market_data.db"
+DB_PATH = _project_path("market_data.db")
 
 # --- Feature versioning ---
 # Bump this integer whenever you change the feature engineering pipeline (add/remove/rename columns).
@@ -32,21 +40,21 @@ FEATURE_SET_VERSION = 1
 
 # --- ML ---
 USE_ML_STRATEGY = True
-ML_MODEL_PATH = "models/ml_strategy.joblib"
-ML_CANDIDATES_DIR = "models/candidates"
+ML_MODEL_PATH = _project_path("models", "ml_strategy.joblib")
+ML_CANDIDATES_DIR = _project_path("models", "candidates")
 ML_REQUIRE_SYMBOL_MODEL = True
 ML_MIN_CANDIDATE_ACCURACY = 0.0
 
 # --- ML Experiment tracking ---
 # Training script appends one JSON line per run.
-EXPERIMENT_LOG_PATH = "ml/experiments/experiments.jsonl"
+EXPERIMENT_LOG_PATH = _project_path("ml", "experiments", "experiments.jsonl")
 
 # --- Backtesting ---
 # Default behavior: decide at bar close, fill at next bar open.
 BACKTEST_STARTING_CASH = 10_000.0
 BACKTEST_WARMUP_BARS = 200
-BACKTEST_OUT_DIR = "backtests/latest"
-DATA_QUALITY_OUT_DIR = "backtests/data_quality"
+BACKTEST_OUT_DIR = _project_path("backtests", "latest")
+DATA_QUALITY_OUT_DIR = _project_path("backtests", "data_quality")
 
 # --- Ensemble ---
 ENSEMBLE_MIN_CONF = 0.55
