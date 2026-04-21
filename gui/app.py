@@ -1202,7 +1202,6 @@ class MainWindow(QtWidgets.QMainWindow):
         symbol, cmd = self._bt_queue.pop(0)
         self.lbl_bt_status.setText(f"Backtest: running {symbol} ({len(self._bt_results)+1}/{len(self._bt_results)+len(self._bt_queue)+1})")
         self.lbl_bt_status.setStyleSheet("font-weight:600; color: gray;")
-        self.log.write("[BACKTEST] " + " ".join(cmd))
 
         self.bt_thread = QtCore.QThread(self)
         self.bt_worker = BacktestWorker(cmd, cwd=PROJECT_ROOT)
