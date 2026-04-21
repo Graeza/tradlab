@@ -1,13 +1,13 @@
 {
   "metrics": {
     "start_equity": 10000.0,
-    "end_equity": 10457.619500000003,
-    "total_return": 0.04576195000000016,
-    "max_drawdown": -0.008186530751051269,
-    "n_trades": 440,
-    "win_rate": 0.41002277904328016,
-    "avg_trade_pnl": 1.0331822323462416,
-    "profit_factor": 1.2343271348711229
+    "end_equity": 11038.422000000002,
+    "total_return": 0.10384220000000033,
+    "max_drawdown": -0.010679428846584923,
+    "n_trades": 1048,
+    "win_rate": 0.4278892072588348,
+    "avg_trade_pnl": 0.9941394460362942,
+    "profit_factor": 1.3493365597767444
   },
   "extra": {
     "symbol": "Boom 300 Index",
@@ -19,7 +19,7 @@
       16388
     ],
     "tag": "next_open_Boom_300_Index",
-    "ml_model_path": "models/ml_strategy.joblib",
+    "ml_model_path": "C:\\Users\\graeh\\Documents\\tradlab\\tradlab\\models\\ml_strategy.joblib",
     "strategy_settings": {
       "use_rsi": true,
       "use_breakout": true,
@@ -56,7 +56,7 @@
       "exec_max_spread": 200,
       "force_fixed_lot": true,
       "fixed_sl_tp": true,
-      "sl_tp_offset": 15.0,
+      "sl_tp_offset": 10.0,
       "enable_trailing_stop": false,
       "trailing_trigger_rr": 0.5,
       "trailing_distance_rr": 0.5,
