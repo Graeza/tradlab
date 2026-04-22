@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import re
 from datetime import datetime, timezone
 import queue
 import subprocess
@@ -883,7 +884,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl_exp = QtWidgets.QTableWidget(0, 8)
         self.tbl_exp.setHorizontalHeaderLabels([
-            "Type", "Time", "Name", "Win Rate/Accuracy", "Profit Factor/Macro F1", "Return%/Feat Ver", "Max Drawdown%/Feat ID", "Model Path"
+            "Type", "Time", "Name", "Win Rate / Accuracy (%)", "Profit Factor / Macro F1", "Return % / Feat Ver", "Max DD % / Feat ID", "Model Path"
         ])
         self.tbl_exp.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         exp_layout.addWidget(self.tbl_exp)
@@ -1202,7 +1203,6 @@ class MainWindow(QtWidgets.QMainWindow):
         symbol, cmd = self._bt_queue.pop(0)
         self.lbl_bt_status.setText(f"Backtest: running {symbol} ({len(self._bt_results)+1}/{len(self._bt_results)+len(self._bt_queue)+1})")
         self.lbl_bt_status.setStyleSheet("font-weight:600; color: gray;")
-        self.log.write("[BACKTEST] " + " ".join(cmd))
 
         self.bt_thread = QtCore.QThread(self)
         self.bt_worker = BacktestWorker(cmd, cwd=PROJECT_ROOT)
@@ -1480,6 +1480,66 @@ class MainWindow(QtWidgets.QMainWindow):
                 or ""
             )
 
+        def parse_macro_f1(rec):
+            f1 = get_metric(rec, "macro_f1", "f1_macro", "f1")
+            if f1 is not None:
+                return f1
+
+            report_text = get_metric(rec, "report")
+            if not isinstance(report_text, str):
+                return None
+
+            # sklearn classification_report includes:
+            # macro avg       <precision> <recall> <f1-score> <support>
+            m = re.search(
+                r"macro avg\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)\s+([0-9]*\.?[0-9]+)",
+                report_text,
+            )
+            if not m:
+                return None
+            try:
+                return float(m.group(3))
+            except Exception:
+                return None
+
+        def build_ml_name(rec, model_path: str):
+            if model_path:
+                stem = os.path.splitext(os.path.basename(model_path))[0]
+                parts = [p for p in stem.split("__") if p]
+                if len(parts) >= 3:
+                    name_parts = [parts[1].replace("_", " ")]
+                    for p in parts[2:]:
+                        if p.startswith(("tf", "h", "fs", "sv")):
+                            name_parts.append(p)
+                    if name_parts:
+                        return " | ".join(name_parts)
+                if stem:
+                    return stem
+
+            return str(
+                rec.get("run_name")
+                or rec.get("name")
+                or rec.get("model_type")
+                or rec.get("model_version")
+                or ""
+            )
+
+        def build_backtest_name(rec):
+            symbol = str(rec.get("symbol") or "").strip()
+            tag = str(rec.get("tag") or "").strip()
+            if symbol and tag:
+                symbol_safe = self._safe_fs_name(symbol)
+                cleaned_tag = tag
+                suffix = f"_{symbol_safe}"
+                if cleaned_tag.endswith(suffix):
+                    cleaned_tag = cleaned_tag[: -len(suffix)]
+                return f"{symbol} | {cleaned_tag}"
+
+            return str(
+                rec.get("name")
+                or f"{symbol} [{tag}]".strip()
+            )
+
         def format_experiment_time(raw_ts):
             ts = "" if raw_ts is None else str(raw_ts).strip()
             if not ts:
@@ -1515,10 +1575,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ts = format_experiment_time(raw_ts)
 
             if rtype == "backtest":
-                name = str(
-                    rec.get("name")
-                    or f"{rec.get('symbol', '')} [{rec.get('tag', '')}]".strip()
-                )
+                name = build_backtest_name(rec)
                 win_rate = get_metric(rec, "win_rate")
                 acc = (float(win_rate) * 100.0) if win_rate is not None else None
                 f1 = get_metric(rec, "profit_factor")
@@ -1526,22 +1583,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 feat_id = metric_percent(rec, ("max_drawdown_pct",), ("max_drawdown",))
                 model_path = str(get_artifact_path(rec))
             else:
-                name = str(
-                    rec.get("model_version")
-                    or rec.get("name")
-                    or rec.get("run_name")
-                    or rec.get("model_type")
-                    or ""
-                )
+                model_path = str(get_artifact_path(rec))
+                name = build_ml_name(rec, model_path)
                 acc = get_metric(rec, "accuracy", "acc")
-                f1 = get_metric(rec, "macro_f1", "f1_macro", "f1")
+                f1 = parse_macro_f1(rec)
                 feat_ver = metric_percent(rec, ("total_return_pct",), ("total_return",))
                 if feat_ver is None:
                     feat_ver = rec.get("feature_set_version") or rec.get("feature_version") or ""
                 feat_id = metric_percent(rec, ("max_drawdown_pct",), ("max_drawdown",))
                 if feat_id is None:
                     feat_id = rec.get("feature_set_id") or rec.get("feature_id") or ""
-                model_path = str(get_artifact_path(rec))
 
             vals = [rtype, ts, name, acc, f1, feat_ver, feat_id, model_path]
             for c, v in enumerate(vals):
