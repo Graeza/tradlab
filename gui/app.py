@@ -1585,7 +1585,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 model_path = str(get_artifact_path(rec))
                 name = build_ml_name(rec, model_path)
-                acc = get_metric(rec, "accuracy", "acc")
+                acc = float(get_metric(rec, "accuracy", "acc") * 100.0)
                 f1 = parse_macro_f1(rec)
                 feat_ver = metric_percent(rec, ("total_return_pct",), ("total_return",))
                 if feat_ver is None:
