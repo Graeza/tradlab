@@ -7,8 +7,8 @@ Notes:
   - Timeframes are in minutes for CLI convenience. They are mapped to MT5 timeframe constants.
   - Data source is the local SQLite DB (DB_PATH). Make sure you've already collected bars.
   - This script can mirror a large subset of the live GUI settings into the backtest path.
-    Live-only controls such as retries, deviation, and real spread checks are accepted for
-    auditability but remain informational in OHLC-only backtests.
+    Retries/deviation are accepted for auditability but remain informational in deterministic
+    next-open backtests.
 """
 
 from __future__ import annotations
@@ -186,6 +186,10 @@ def main() -> None:
     ap.add_argument("--session-start-hour", type=int, default=0)
     ap.add_argument("--session-end-hour", type=int, default=24)
     ap.add_argument("--allow-weekends", type=_parse_bool, default=False)
+    ap.add_argument("--point-size", type=float, default=0.01, help="Price value of one spread/slippage point")
+    ap.add_argument("--default-spread-points", type=float, default=0.0, help="Fallback spread (points) if bar spread is unavailable")
+    ap.add_argument("--slippage-points", type=float, default=0.0, help="Adverse slippage per fill (points)")
+    ap.add_argument("--cancel-pending-on-session-block", type=_parse_bool, default=True, help="Drop queued entries if next open is outside allowed session")
     ap.add_argument("--enable-spread-filter", type=_parse_bool, default=False)
     ap.add_argument("--exec-max-spread", type=int, default=0)
     ap.add_argument("--force-fixed-lot", type=_parse_bool, default=False)
@@ -269,6 +273,10 @@ def main() -> None:
         session_start_hour=int(args.session_start_hour),
         session_end_hour=int(args.session_end_hour),
         allow_weekends=bool(args.allow_weekends),
+        point_size=float(args.point_size),
+        default_spread_points=float(args.default_spread_points),
+        slippage_points=float(args.slippage_points),
+        cancel_pending_on_session_block=bool(args.cancel_pending_on_session_block),
         enable_trailing_stop=bool(args.enable_trailing_stop),
         trailing_trigger_rr=float(args.trailing_trigger_rr),
         trailing_distance_rr=float(args.trailing_distance_rr),
@@ -339,6 +347,10 @@ def main() -> None:
             "session_start_hour": int(args.session_start_hour),
             "session_end_hour": int(args.session_end_hour),
             "allow_weekends": bool(args.allow_weekends),
+            "point_size": float(args.point_size),
+            "default_spread_points": float(args.default_spread_points),
+            "slippage_points": float(args.slippage_points),
+            "cancel_pending_on_session_block": bool(args.cancel_pending_on_session_block),
             "enable_spread_filter": bool(args.enable_spread_filter),
             "exec_max_spread": int(args.exec_max_spread),
             "force_fixed_lot": bool(args.force_fixed_lot),
@@ -352,7 +364,7 @@ def main() -> None:
             "retry_delay_ms": int(args.retry_delay_ms),
             "notes": [
                 "retries and retry_delay_ms are informational only in deterministic backtests",
-                "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
+                "spread filters apply when spread data exists (or when default_spread_points is set)",
                 "base_deviation_points is informational only in backtests",
             ],
         },

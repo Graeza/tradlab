@@ -16,8 +16,8 @@ class BacktestRiskManager:
 
     Notes:
       - qty is in simulated units, not broker lots.
-      - max_spread_points and base_deviation_points are kept for parity/audit, but
-        they are informational unless you later provide historical spread/slippage data.
+      - spread filters can be enforced when historical bar spread is available.
+      - base_deviation_points remains informational (deterministic next-open model).
     """
 
     def __init__(
@@ -66,6 +66,8 @@ class BacktestRiskManager:
         entry_price: float,
         regime: Optional[Dict[str, Any]] = None,
         symbol: str = "",
+        spread_points: Optional[float] = None,
+        point_size: float = 1.0,
     ) -> Optional[BacktestRiskParams]:
         if not isinstance(signal, dict):
             return None
@@ -77,6 +79,12 @@ class BacktestRiskManager:
 
         if equity <= 0 or entry_price <= 0:
             return None
+
+        spread_pts = None if spread_points is None else float(spread_points)
+        if self.enable_spread_filter and spread_pts is not None:
+            cap = int(self.exec_max_spread_points or self.max_spread_points)
+            if cap > 0 and spread_pts > float(cap):
+                return None
 
         reg = regime if isinstance(regime, dict) else {}
         atr_pct = float(reg.get("atr_pct") or 0.0)
@@ -95,6 +103,8 @@ class BacktestRiskManager:
 
         risk_money = equity * (self.max_risk_pct / 100.0)
         per_unit_loss = sl_dist
+        if spread_pts is not None and point_size > 0:
+            per_unit_loss += spread_pts * float(point_size)
         qty = risk_money / per_unit_loss
         if qty <= 0:
             return None

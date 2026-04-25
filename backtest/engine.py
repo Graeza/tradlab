@@ -43,6 +43,15 @@ def _slice_up_to_time(df: pd.DataFrame, time_s: int, time_values: Optional[np.nd
     return df.iloc[:end_idx]
 
 
+def _read_spread_points(bars: pd.DataFrame, i: int) -> Optional[float]:
+    if bars is None or bars.empty or "spread" not in bars.columns:
+        return None
+    v = bars.iloc[int(i)].get("spread")
+    if pd.isna(v):
+        return None
+    return float(v)
+
+
 def run_backtest_next_open(
     *,
     symbol: str,
@@ -81,6 +90,7 @@ def run_backtest_next_open(
         t = int(primary_bars.loc[i, "time"])
         current_open = float(primary_bars.loc[i, "open"])
         next_open = float(primary_bars.loc[i + 1, "open"])
+        spread_points = _read_spread_points(primary_bars, i)
 
         data_by_tf: Dict[int, pd.DataFrame] = {}
         for tf in timeframes:
@@ -90,7 +100,7 @@ def run_backtest_next_open(
         primary_df = data_by_tf.get(primary_tf, pd.DataFrame())
         regime = detect_regime(primary_df) if primary_df is not None and not primary_df.empty else {"trend": "UNKNOWN", "vol": "UNKNOWN"}
 
-        broker.on_bar_open(time_s=t, symbol=symbol, open_price=current_open)
+        broker.on_bar_open(time_s=t, symbol=symbol, open_price=current_open, spread_points=spread_points)
 
         final_signal, outputs = ensemble.run(data_by_tf, regime=regime, context={
                 "symbol": symbol,
@@ -120,6 +130,8 @@ def run_backtest_next_open(
             entry_price=next_open,
             regime=regime,
             symbol=symbol,
+            spread_points=spread_points,
+            point_size=getattr(broker, "point_size", 1.0),
         )
         if params is not None and broker.can_open_new_trade(time_s=t, symbol=symbol):
             broker.queue_order(
@@ -136,6 +148,7 @@ def run_backtest_next_open(
             high=float(primary_bars.loc[i, "high"]),
             low=float(primary_bars.loc[i, "low"]),
             close=float(primary_bars.loc[i, "close"]),
+            spread_points=spread_points,
         )
 
     equity_curve = pd.DataFrame(broker.equity_curve)
