@@ -57,11 +57,20 @@ class MLModelRegistry:
             if not isinstance(loaded, dict):
                 return (float("-inf"), path.stat().st_mtime)
             metrics = loaded.get("train_metrics") if isinstance(loaded.get("train_metrics"), dict) else {}
-            acc = metrics.get("accuracy")
+            walk_forward = metrics.get("walk_forward") if isinstance(metrics.get("walk_forward"), dict) else {}
+            use_walk_forward = bool(walk_forward.get("enabled")) and walk_forward.get("mean_accuracy") is not None
+            if use_walk_forward:
+                acc = walk_forward.get("mean_accuracy")
+                min_fold_acc = walk_forward.get("min_accuracy")
+            else:
+                acc = metrics.get("accuracy")
+                min_fold_acc = None
             if acc is None:
                 return (float("-inf"), path.stat().st_mtime)
             acc = float(acc)
             if acc < self.min_candidate_accuracy:
+                return (float("-inf"), path.stat().st_mtime)
+            if min_fold_acc is not None and float(min_fold_acc) < self.min_candidate_accuracy:
                 return (float("-inf"), path.stat().st_mtime)
             return (acc, path.stat().st_mtime)
         except Exception:

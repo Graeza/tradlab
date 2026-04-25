@@ -47,6 +47,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--schema-version", type=int, default=1)
     p.add_argument("--strict-schema", action="store_true")
     p.add_argument("--limit", type=int, default=200000)
+    p.add_argument(
+        "--validation-policy",
+        choices=("holdout", "walk_forward"),
+        default="walk_forward",
+        help="Validation policy passed to train_model.py (default: walk_forward).",
+    )
+    p.add_argument("--wf-folds", type=int, default=4, help="Walk-forward folds for train_model.py")
+    p.add_argument("--wf-min-train-frac", type=float, default=0.50, help="Minimum training fraction before first fold")
     return p.parse_args()
 
 
@@ -92,6 +100,9 @@ def main() -> None:
                     "--symbol", symbol,
                     "--timeframe", str(int(timeframe)),
                     "--horizon-bars", str(int(LABEL_HORIZON_BARS)),
+                    "--validation-policy", str(args.validation_policy),
+                    "--wf-folds", str(int(args.wf_folds)),
+                    "--wf-min-train-frac", str(float(args.wf_min_train_frac)),
                 ]
                 if bool(args.strict_schema):
                     sys.argv.append("--strict-schema")

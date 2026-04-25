@@ -35,12 +35,17 @@ python -m core.main
 - If no candidate exists, runtime fallback behavior is controlled by:
   - `ML_REQUIRE_SYMBOL_MODEL` (if `True`, bot will HOLD when a symbol-specific model is missing),
   - `ML_MODEL_PATH` (promoted fallback model),
-  - `ML_MIN_CANDIDATE_ACCURACY` (minimum `train_metrics.accuracy` for candidate selection).
+  - `ML_MIN_CANDIDATE_ACCURACY` (minimum validation score for candidate selection; now defaults to `0.55`).
+- Training now defaults to a walk-forward validation policy (expanding windows) rather than a single holdout.
+- Registry candidate scoring prefers walk-forward metrics when available and enforces the quality floor on both mean and worst fold accuracy.
 
 Train all symbols in one pass:
 
 ```bash
 python -m scripts.train_all_symbols --strict-schema
+
+# optional explicit policy tuning
+python -m scripts.train_all_symbols --validation-policy walk_forward --wf-folds 4 --wf-min-train-frac 0.5
 ```
 
 ## Adding a new strategy

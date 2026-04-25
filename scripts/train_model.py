@@ -41,6 +41,24 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--strict-schema", action="store_true", help="If set, bot will refuse to trade on schema drift")
     p.add_argument("--fillna-value", default=None, help="Optional fill value for NaNs (e.g. 0.0). If omitted, NaNs cause rejection in live.")
     p.add_argument("--test-frac", type=float, default=0.2, help="Holdout fraction for evaluation (default 0.2)")
+    p.add_argument(
+        "--validation-policy",
+        choices=("holdout", "walk_forward"),
+        default="walk_forward",
+        help="Validation policy used for candidate quality scoring (default: walk_forward)",
+    )
+    p.add_argument(
+        "--wf-folds",
+        type=int,
+        default=4,
+        help="Walk-forward folds (expanding window) when --validation-policy=walk_forward",
+    )
+    p.add_argument(
+        "--wf-min-train-frac",
+        type=float,
+        default=0.50,
+        help="Minimum training fraction required before first walk-forward fold (default: 0.50)",
+    )
     p.add_argument("--random-state", type=int, default=42, help="Random seed")
     p.add_argument("--n-estimators", type=int, default=400, help="RandomForest n_estimators")
     p.add_argument("--max-depth", type=int, default=10, help="RandomForest max_depth")
@@ -69,6 +87,36 @@ def _infer_feature_cols(df: pd.DataFrame, label_col: str, non_feature_cols: set[
         if pd.api.types.is_numeric_dtype(df[c]):
             cols.append(c)
     return cols
+
+
+def _build_classifier(*, args: argparse.Namespace) -> RandomForestClassifier:
+    return RandomForestClassifier(
+        n_estimators=args.n_estimators,
+        max_depth=args.max_depth,
+        random_state=args.random_state,
+        n_jobs=-1,
+        class_weight="balanced_subsample",
+    )
+
+
+def _walk_forward_slices(n_rows: int, test_frac: float, folds: int, min_train_frac: float) -> list[tuple[slice, slice]]:
+    if n_rows <= 1:
+        return []
+    n_test = max(1, int(round(n_rows * test_frac)))
+    folds = max(1, int(folds))
+    min_train_rows = max(1, int(round(n_rows * float(min_train_frac))))
+    first_train_end = n_rows - (n_test * folds)
+    if first_train_end < min_train_rows:
+        first_train_end = min_train_rows
+    slices: list[tuple[slice, slice]] = []
+    for i in range(folds):
+        train_end = first_train_end + i * n_test
+        test_start = train_end
+        test_end = min(n_rows, test_start + n_test)
+        if train_end <= 0 or test_start >= test_end:
+            continue
+        slices.append((slice(0, train_end), slice(test_start, test_end)))
+    return slices
 
 
 def main() -> None:
@@ -152,13 +200,45 @@ def main() -> None:
             X, y, test_size=args.test_frac, random_state=args.random_state, shuffle=True
         )
 
-    clf = RandomForestClassifier(
-        n_estimators=args.n_estimators,
-        max_depth=args.max_depth,
-        random_state=args.random_state,
-        n_jobs=-1,
-        class_weight="balanced_subsample",
-    )
+    walk_forward_metrics = {
+        "enabled": False,
+        "fold_accuracies": [],
+        "mean_accuracy": None,
+        "min_accuracy": None,
+        "n_folds": 0,
+    }
+    if args.validation_policy == "walk_forward":
+        if "time" not in df.columns:
+            print("[WARN] walk_forward requested but dataset has no 'time' column; falling back to holdout validation.")
+        else:
+            fold_slices = _walk_forward_slices(
+                n_rows=len(df),
+                test_frac=float(args.test_frac),
+                folds=int(args.wf_folds),
+                min_train_frac=float(args.wf_min_train_frac),
+            )
+            fold_accuracies = []
+            for train_slc, test_slc in fold_slices:
+                X_tr, X_te = X.iloc[train_slc], X.iloc[test_slc]
+                y_tr, y_te = y.iloc[train_slc], y.iloc[test_slc]
+                if len(X_tr) < 10 or len(X_te) < 1:
+                    continue
+                fold_clf = _build_classifier(args=args)
+                fold_clf.fit(X_tr, y_tr)
+                fold_pred = fold_clf.predict(X_te)
+                fold_accuracies.append(float(accuracy_score(y_te, fold_pred)))
+            if fold_accuracies:
+                walk_forward_metrics = {
+                    "enabled": True,
+                    "fold_accuracies": fold_accuracies,
+                    "mean_accuracy": float(np.mean(fold_accuracies)),
+                    "min_accuracy": float(np.min(fold_accuracies)),
+                    "n_folds": int(len(fold_accuracies)),
+                }
+            else:
+                print("[WARN] walk_forward requested but no valid folds were generated; falling back to holdout validation.")
+
+    clf = _build_classifier(args=args)
     clf.fit(X_train, y_train)
 
     # Eval
@@ -183,14 +263,24 @@ def main() -> None:
             else:
                 conf_stats[f"coverage@{thr:.2f}"] = 0.0
                 conf_stats[f"acc@{thr:.2f}"] = None
-    acc = accuracy_score(y_test, pred)
+    holdout_acc = accuracy_score(y_test, pred)
+    acc = holdout_acc
+    if bool(walk_forward_metrics.get("enabled")) and walk_forward_metrics.get("mean_accuracy") is not None:
+        acc = float(walk_forward_metrics["mean_accuracy"])
     cm = confusion_matrix(y_test, pred)
     report = classification_report(y_test, pred, zero_division=0)
 
     print("=== Evaluation ===")
     print(f"Rows: {len(df)} | Train: {len(X_train)} | Test: {len(X_test)}")
     print(f"Features: {len(feature_cols)}")
-    print(f"Accuracy: {acc:.4f}")
+    print(f"Holdout accuracy: {holdout_acc:.4f}")
+    if bool(walk_forward_metrics.get("enabled")):
+        print(
+            "Walk-forward mean accuracy: "
+            f"{float(walk_forward_metrics['mean_accuracy']):.4f} "
+            f"(min fold={float(walk_forward_metrics['min_accuracy']):.4f}, folds={int(walk_forward_metrics['n_folds'])})"
+        )
+    print(f"Selection accuracy: {acc:.4f} (policy={args.validation_policy})")
     print("Confusion matrix:")
     print(cm)
     print("Classification report:")
@@ -222,7 +312,10 @@ def main() -> None:
         "class_to_signal": class_to_signal,
         "fillna_value": fillna_value,  # None means: do not fill in live; reject NaN/inf instead
         "train_metrics": {
-            "accuracy": float(acc),
+            "accuracy": float(acc),  # policy-selected score used by model registry
+            "holdout_accuracy": float(holdout_acc),
+            "validation_policy": str(args.validation_policy),
+            "walk_forward": walk_forward_metrics,
             "confusion_matrix": cm.tolist(),
             "report": report,
             "train_rows": int(len(X_train)),
@@ -251,6 +344,9 @@ def main() -> None:
             utc_ts=datetime.now(timezone.utc).isoformat(),
             params={
                 "test_frac": float(args.test_frac),
+                "validation_policy": str(args.validation_policy),
+                "wf_folds": int(args.wf_folds),
+                "wf_min_train_frac": float(args.wf_min_train_frac),
                 "random_state": int(args.random_state),
                 "n_estimators": int(args.n_estimators),
                 "max_depth": int(args.max_depth),
@@ -262,6 +358,9 @@ def main() -> None:
             },
             metrics={
                 "accuracy": float(acc),
+                "holdout_accuracy": float(holdout_acc),
+                "validation_policy": str(args.validation_policy),
+                "walk_forward": walk_forward_metrics,
                 "confusion_matrix": cm.tolist(),
                 "report": report,
                 "train_rows": int(len(X_train)),

@@ -43,7 +43,7 @@ USE_ML_STRATEGY = True
 ML_MODEL_PATH = _project_path("models", "ml_strategy.joblib")
 ML_CANDIDATES_DIR = _project_path("models", "candidates")
 ML_REQUIRE_SYMBOL_MODEL = True
-ML_MIN_CANDIDATE_ACCURACY = 0.0
+ML_MIN_CANDIDATE_ACCURACY = 0.55
 
 # --- ML Experiment tracking ---
 # Training script appends one JSON line per run.
