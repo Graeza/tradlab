@@ -21,6 +21,7 @@ class BacktestResult:
     fills: pd.DataFrame
     strategy_outputs: pd.DataFrame
     metrics: BacktestMetrics
+    diagnostics: dict[str, int]
 
 
 def _precompute_features(bars_by_tf: Dict[int, pd.DataFrame]) -> Dict[int, pd.DataFrame]:
@@ -85,8 +86,17 @@ def run_backtest_next_open(
         raise ValueError("Not enough bars for backtest after warmup")
     
     strategy_output_rows: list[dict] = []
+    diagnostics: dict[str, int] = {
+        "bars_processed": 0,
+        "actionable_signals": 0,
+        "risk_rejected": 0,
+        "spread_rejected": 0,
+        "broker_blocked": 0,
+        "orders_queued": 0,
+    }
 
     for i in range(start_i, end_i + 1):
+        diagnostics["bars_processed"] += 1
         t = int(primary_bars.loc[i, "time"])
         current_open = float(primary_bars.loc[i, "open"])
         next_open = float(primary_bars.loc[i + 1, "open"])
@@ -124,6 +134,15 @@ def run_backtest_next_open(
                 "regime_vol": str(regime.get("vol", "UNKNOWN")),
             })
 
+        action = str((final_signal or {}).get("signal") or "HOLD").upper()
+        confidence = float((final_signal or {}).get("confidence") or 0.0)
+        if action in ("BUY", "SELL") and confidence >= float(getattr(risk, "min_confidence", 0.0)):
+            diagnostics["actionable_signals"] += 1
+            spread_cap = int(getattr(risk, "exec_max_spread_points", 0) or getattr(risk, "max_spread_points", 0) or 0)
+            if bool(getattr(risk, "enable_spread_filter", False)) and spread_points is not None and spread_cap > 0:
+                if float(spread_points) > float(spread_cap):
+                    diagnostics["spread_rejected"] += 1
+
         params = risk.assess(
             signal=final_signal,
             equity=broker.equity,
@@ -133,7 +152,11 @@ def run_backtest_next_open(
             spread_points=spread_points,
             point_size=getattr(broker, "point_size", 1.0),
         )
-        if params is not None and broker.can_open_new_trade(time_s=t, symbol=symbol):
+        if params is None and action in ("BUY", "SELL") and confidence >= float(getattr(risk, "min_confidence", 0.0)):
+            diagnostics["risk_rejected"] += 1
+
+        can_open = broker.can_open_new_trade(time_s=t, symbol=symbol)
+        if params is not None and can_open:
             broker.queue_order(
                 symbol=symbol,
                 side=str(final_signal.get("signal")),
@@ -141,6 +164,9 @@ def run_backtest_next_open(
                 sl=params.sl,
                 tp=params.tp,
             )
+            diagnostics["orders_queued"] += 1
+        elif params is not None and not can_open:
+            diagnostics["broker_blocked"] += 1
 
         broker.on_bar(
             time_s=t,
@@ -160,4 +186,5 @@ def run_backtest_next_open(
         fills=fills,
         strategy_outputs=strategy_outputs,
         metrics=metrics,
+        diagnostics=diagnostics,
     )

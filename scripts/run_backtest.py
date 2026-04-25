@@ -401,6 +401,22 @@ def main() -> None:
     print(f"Total return: {res.metrics.total_return*100:.2f}%")
     print(f"Max drawdown: {res.metrics.max_drawdown*100:.2f}%")
     print(f"Trades: {res.metrics.n_trades} | Win rate: {res.metrics.win_rate*100:.1f}% | Avg trade PnL: {res.metrics.avg_trade_pnl:.2f}")
+    if int(res.metrics.n_trades) == 0:
+        d = res.diagnostics if isinstance(res.diagnostics, dict) else {}
+        print(
+            "[BACKTEST][DIAG] "
+            f"bars={int(d.get('bars_processed', 0))} "
+            f"actionable_signals={int(d.get('actionable_signals', 0))} "
+            f"risk_rejected={int(d.get('risk_rejected', 0))} "
+            f"spread_rejected={int(d.get('spread_rejected', 0))} "
+            f"broker_blocked={int(d.get('broker_blocked', 0))} "
+            f"orders_queued={int(d.get('orders_queued', 0))}"
+        )
+        if int(d.get("spread_rejected", 0)) > 0:
+            print(
+                "[BACKTEST][DIAG] Spread filter is likely blocking entries. "
+                "Try increasing --exec-max-spread for this symbol or set --enable-spread-filter False."
+            )
     if res.metrics.profit_factor is not None:
         print(f"Profit factor: {res.metrics.profit_factor:.2f}")
     print(f"Outputs saved to: {args.out}")
