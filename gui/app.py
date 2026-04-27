@@ -894,18 +894,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_audit_data_gaps = QtWidgets.QPushButton("Audit DB Gaps")
         self.btn_backfill_data_gaps = QtWidgets.QPushButton("Backfill DB Gaps")
         self.btn_manual_ohlc = QtWidgets.QPushButton("Manual OHLC Entry")
+        self.btn_bt_plot_chart = QtWidgets.QPushButton("Candlestick Chart")
 
         bt_btn_row.addWidget(self.btn_run_backtest)
         bt_btn_row.addWidget(self.btn_audit_data_gaps)
         bt_btn_row.addWidget(self.btn_backfill_data_gaps)
         bt_btn_row.addWidget(self.btn_manual_ohlc)
+        bt_btn_row.addWidget(self.btn_bt_plot_chart)
         bt_btn_row.addStretch(1)
 
         bt_layout.addLayout(bt_btn_row)
 
         bt_chart_row = QtWidgets.QHBoxLayout()
-        self.btn_bt_plot_chart = QtWidgets.QPushButton("Create Candlestick Chart")
-        bt_chart_row.addWidget(self.btn_bt_plot_chart)
+        bt_chart_row.addWidget(QtWidgets.QLabel("Display from:"))
+        self.bt_chart_start_date = QtWidgets.QDateEdit()
+        self.bt_chart_start_date.setCalendarPopup(True)
+        self.bt_chart_start_date.setDisplayFormat("yyyy-MM-dd")
+        self.bt_chart_start_date.setDate(QtCore.QDate.currentDate().addMonths(-1))
+        bt_chart_row.addWidget(self.bt_chart_start_date)
         bt_chart_row.addWidget(QtWidgets.QLabel("Indicators:"))
         self.bt_ind_rsi = QtWidgets.QCheckBox("RSI")
         self.bt_ind_rsi.setChecked(True)
@@ -951,8 +957,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_bt_status = QtWidgets.QLabel("Backtest: —")
         self.lbl_bt_status.setStyleSheet("color: gray;")
         bt_layout.addWidget(self.lbl_bt_status)
-
-        bt_layout.addStretch(1)
         tabs.addTab(bt_tab, "Backtest")
 
         # ========== TAB: ML Training ==========
@@ -1803,6 +1807,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return pd.DataFrame()
 
         start_ts, end_ts = self._parse_backtest_date_range()
+        chart_start_dt = self.bt_chart_start_date.date().toPython()
+        chart_start_ts = int(datetime.combine(chart_start_dt, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        if start_ts is None or chart_start_ts > start_ts:
+            start_ts = chart_start_ts
         if start_ts is not None:
             df = df[df["time"] >= int(start_ts)]
         if end_ts is not None:
