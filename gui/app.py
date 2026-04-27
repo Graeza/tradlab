@@ -10,6 +10,8 @@ import subprocess
 import sys
 import shutil
 from typing import Optional
+import numpy as np
+import pandas as pd
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -47,6 +49,7 @@ from risk_manager import RiskManager
 from trade_executor import TradeExecutor
 from utils.mt5_positions import close_positions, list_positions
 from utils.mt5_account import get_account_summary
+from utils.indicators import calculate_rsi, calculate_ema, calculate_macd
 
 class TrainWorker(QtCore.QObject):
     line = QtCore.Signal(str)
@@ -900,6 +903,51 @@ class MainWindow(QtWidgets.QMainWindow):
 
         bt_layout.addLayout(bt_btn_row)
 
+        bt_chart_row = QtWidgets.QHBoxLayout()
+        self.btn_bt_plot_chart = QtWidgets.QPushButton("Create Candlestick Chart")
+        bt_chart_row.addWidget(self.btn_bt_plot_chart)
+        bt_chart_row.addWidget(QtWidgets.QLabel("Indicators:"))
+        self.bt_ind_rsi = QtWidgets.QCheckBox("RSI")
+        self.bt_ind_rsi.setChecked(True)
+        self.bt_ind_ema10 = QtWidgets.QCheckBox("EMA10")
+        self.bt_ind_ema10.setChecked(True)
+        self.bt_ind_ema21 = QtWidgets.QCheckBox("EMA21")
+        self.bt_ind_ema21.setChecked(True)
+        self.bt_ind_macd = QtWidgets.QCheckBox("MACD")
+        self.bt_ind_macd.setChecked(False)
+        self.bt_ind_macd_signal = QtWidgets.QCheckBox("MACD Signal")
+        self.bt_ind_macd_signal.setChecked(False)
+        self.bt_ind_macd_hist = QtWidgets.QCheckBox("MACD Hist")
+        self.bt_ind_macd_hist.setChecked(False)
+        bt_chart_row.addWidget(self.bt_ind_rsi)
+        bt_chart_row.addWidget(self.bt_ind_ema10)
+        bt_chart_row.addWidget(self.bt_ind_ema21)
+        bt_chart_row.addWidget(self.bt_ind_macd)
+        bt_chart_row.addWidget(self.bt_ind_macd_signal)
+        bt_chart_row.addWidget(self.bt_ind_macd_hist)
+        bt_chart_row.addStretch(1)
+        bt_layout.addLayout(bt_chart_row)
+
+        self.bt_chart_widget = pg.GraphicsLayoutWidget()
+        self.bt_price_plot = self.bt_chart_widget.addPlot(row=0, col=0)
+        self.bt_price_plot.setLabel("left", "Price")
+        self.bt_price_plot.showGrid(x=True, y=True, alpha=0.2)
+        self.bt_price_plot.setMenuEnabled(True)
+        self.bt_price_plot.setMouseEnabled(x=True, y=True)
+        self.bt_price_plot.setClipToView(True)
+        self.bt_price_plot.addLegend(offset=(10, 10))
+
+        self.bt_indicator_plot = self.bt_chart_widget.addPlot(row=1, col=0)
+        self.bt_indicator_plot.setLabel("left", "Indicators")
+        self.bt_indicator_plot.setLabel("bottom", "Bars")
+        self.bt_indicator_plot.showGrid(x=True, y=True, alpha=0.2)
+        self.bt_indicator_plot.setMouseEnabled(x=True, y=True)
+        self.bt_indicator_plot.setXLink(self.bt_price_plot)
+        self.bt_indicator_plot.addLegend(offset=(10, 10))
+        self.bt_chart_widget.ci.layout.setRowStretchFactor(0, 3)
+        self.bt_chart_widget.ci.layout.setRowStretchFactor(1, 2)
+        bt_layout.addWidget(self.bt_chart_widget, 1)
+
         self.lbl_bt_status = QtWidgets.QLabel("Backtest: —")
         self.lbl_bt_status.setStyleSheet("color: gray;")
         bt_layout.addWidget(self.lbl_bt_status)
@@ -1084,6 +1132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_audit_data_gaps.clicked.connect(self.run_data_gap_audit)
         self.btn_backfill_data_gaps.clicked.connect(self.run_backfill_data_gaps)
         self.btn_manual_ohlc.clicked.connect(self.open_manual_ohlc_dialog)
+        self.btn_bt_plot_chart.clicked.connect(self.plot_backtest_chart)
 
         # Risk/execution guard
         self.btn_apply_risk.clicked.connect(self.apply_risk_settings)
@@ -1731,6 +1780,146 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.write(f"[EXP] Promote failed: {e}")
 
     # ---------- Backtest ----------
+    def _parse_backtest_date_range(self) -> tuple[Optional[int], Optional[int]]:
+        start_ts: Optional[int] = None
+        end_ts: Optional[int] = None
+
+        start_text = (self.bt_start.text() or "").strip()
+        end_text = (self.bt_end.text() or "").strip()
+
+        if start_text:
+            start_dt = datetime.strptime(start_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            start_ts = int(start_dt.timestamp())
+        if end_text:
+            end_dt = datetime.strptime(end_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_ts = int(end_dt.timestamp()) + (24 * 60 * 60) - 1
+        if start_ts is not None and end_ts is not None and start_ts > end_ts:
+            raise ValueError("start date is after end date")
+        return start_ts, end_ts
+
+    def _load_chart_bars(self, symbol: str, timeframe: int) -> pd.DataFrame:
+        df = self.db.load_bars(symbol=symbol, timeframe=timeframe, limit=20_000)
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        start_ts, end_ts = self._parse_backtest_date_range()
+        if start_ts is not None:
+            df = df[df["time"] >= int(start_ts)]
+        if end_ts is not None:
+            df = df[df["time"] <= int(end_ts)]
+        return df.reset_index(drop=True)
+
+    def _plot_candles(self, plot: pg.PlotItem, df: pd.DataFrame) -> None:
+        x = np.arange(len(df), dtype=float)
+        o = df["open"].to_numpy(dtype=float)
+        h = df["high"].to_numpy(dtype=float)
+        l = df["low"].to_numpy(dtype=float)
+        c = df["close"].to_numpy(dtype=float)
+
+        # Candle wick segments using NaN separators.
+        wick_x = np.empty(len(df) * 3, dtype=float)
+        wick_y = np.empty(len(df) * 3, dtype=float)
+        wick_x[0::3] = x
+        wick_x[1::3] = x
+        wick_x[2::3] = np.nan
+        wick_y[0::3] = l
+        wick_y[1::3] = h
+        wick_y[2::3] = np.nan
+        plot.plot(wick_x, wick_y, pen=pg.mkPen((200, 200, 200), width=1), name="Wicks")
+
+        bull = c >= o
+        bear = ~bull
+        width = 0.65
+        if np.any(bull):
+            bull_item = pg.BarGraphItem(
+                x=x[bull],
+                y0=o[bull],
+                y1=c[bull],
+                width=width,
+                brush=pg.mkBrush(30, 170, 80, 180),
+                pen=pg.mkPen(30, 170, 80, 220),
+            )
+            plot.addItem(bull_item)
+        if np.any(bear):
+            bear_item = pg.BarGraphItem(
+                x=x[bear],
+                y0=o[bear],
+                y1=c[bear],
+                width=width,
+                brush=pg.mkBrush(210, 60, 60, 180),
+                pen=pg.mkPen(210, 60, 60, 220),
+            )
+            plot.addItem(bear_item)
+
+    @QtCore.Slot()
+    def plot_backtest_chart(self):
+        try:
+            symbol = self.bt_symbol.currentText().strip()
+            timeframe = int(self.bt_primary_tf.currentData())
+            if not symbol:
+                self.lbl_bt_status.setText("Backtest: select a symbol for charting")
+                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                return
+
+            df = self._load_chart_bars(symbol=symbol, timeframe=timeframe)
+            if df.empty:
+                self.lbl_bt_status.setText("Backtest: no bars found for selected range")
+                self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+                return
+
+            # Calculate indicators only once, then display based on checkbox selection.
+            df = calculate_ema(df.copy(), "close", 10)
+            df = calculate_ema(df, "close", 21)
+            df = calculate_rsi(df, 14)
+            df = calculate_macd(df)
+
+            self.bt_price_plot.clear()
+            self.bt_indicator_plot.clear()
+            self.bt_price_plot.addLegend(offset=(10, 10))
+            self.bt_indicator_plot.addLegend(offset=(10, 10))
+            self._plot_candles(self.bt_price_plot, df)
+
+            x = np.arange(len(df), dtype=float)
+            if self.bt_ind_ema10.isChecked() and "close_EMA10" in df.columns:
+                self.bt_price_plot.plot(x, df["close_EMA10"].to_numpy(dtype=float), pen=pg.mkPen("#f5c542", width=1.5), name="EMA10")
+            if self.bt_ind_ema21.isChecked() and "close_EMA21" in df.columns:
+                self.bt_price_plot.plot(x, df["close_EMA21"].to_numpy(dtype=float), pen=pg.mkPen("#3fa7ff", width=1.5), name="EMA21")
+
+            if self.bt_ind_rsi.isChecked() and "RSI" in df.columns:
+                self.bt_indicator_plot.plot(x, df["RSI"].to_numpy(dtype=float), pen=pg.mkPen("#b182ff", width=1.5), name="RSI")
+                self.bt_indicator_plot.addLine(y=30, pen=pg.mkPen((150, 150, 150), style=QtCore.Qt.PenStyle.DashLine))
+                self.bt_indicator_plot.addLine(y=70, pen=pg.mkPen((150, 150, 150), style=QtCore.Qt.PenStyle.DashLine))
+
+            if self.bt_ind_macd.isChecked() and "MACD" in df.columns:
+                self.bt_indicator_plot.plot(x, df["MACD"].to_numpy(dtype=float), pen=pg.mkPen("#00d1b2", width=1.3), name="MACD")
+            if self.bt_ind_macd_signal.isChecked() and "MACD_Signal" in df.columns:
+                self.bt_indicator_plot.plot(x, df["MACD_Signal"].to_numpy(dtype=float), pen=pg.mkPen("#ff8c42", width=1.3), name="MACD Signal")
+            if self.bt_ind_macd_hist.isChecked() and "MACD_Hist" in df.columns:
+                hist = df["MACD_Hist"].fillna(0.0).to_numpy(dtype=float)
+                self.bt_indicator_plot.addItem(
+                    pg.BarGraphItem(
+                        x=x,
+                        y0=np.zeros_like(hist),
+                        y1=hist,
+                        width=0.65,
+                        brush=pg.mkBrush(120, 120, 255, 120),
+                        pen=pg.mkPen(120, 120, 255, 180),
+                    )
+                )
+
+            self.bt_price_plot.setTitle(f"{symbol} TF {timeframe} Candles (drag to pan, wheel to zoom)")
+            self.bt_indicator_plot.setTitle("Selected indicators")
+            self.bt_price_plot.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
+            self.bt_indicator_plot.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
+            self.lbl_bt_status.setText(f"Backtest: chart loaded ({len(df)} bars)")
+            self.lbl_bt_status.setStyleSheet("font-weight:600; color: green;")
+        except ValueError as e:
+            self.lbl_bt_status.setText(f"Backtest: invalid chart range ({e})")
+            self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+        except Exception as e:
+            self.lbl_bt_status.setText(f"Backtest: chart failed ({e})")
+            self.lbl_bt_status.setStyleSheet("font-weight:600; color: red;")
+
     @QtCore.Slot()
     def run_backtest(self):
         try:
