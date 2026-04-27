@@ -619,7 +619,7 @@ class TradeExecutor:
                 count += 1
         return count
 
-    def auto_close_profitable_boom_buys(self, min_profit: float = 0.0) -> list[dict[str, Any]]:
+    def auto_close_profits(self, min_profit: float = 0.0) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         threshold = float(min_profit or 0.0)
 
@@ -642,7 +642,7 @@ class TradeExecutor:
 
                 events.append({
                     "ok": bool(ok),
-                    "event_type": "AUTO_CLOSE_PROFITABLE_BOOM_BUY",
+                    "event_type": "AUTO_CLOSE_PROFITS",
                     "position_id": position_id,
                     "symbol": symbol,
                     "side": side,
@@ -653,7 +653,7 @@ class TradeExecutor:
             except Exception as e:
                 events.append({
                     "ok": False,
-                    "event_type": "AUTO_CLOSE_PROFITABLE_BOOM_BUY",
+                    "event_type": "AUTO_CLOSE_PROFITS",
                     "position_id": int(getattr(p, "ticket", 0) or 0),
                     "symbol": str(getattr(p, "symbol", "") or ""),
                     "side": self._position_side(p) if p is not None else "UNKNOWN",
@@ -664,6 +664,10 @@ class TradeExecutor:
                 })
 
         return events
+
+    # Backward-compatible alias
+    def auto_close_profitable_boom_buys(self, min_profit: float = 0.0) -> list[dict[str, Any]]:
+        return self.auto_close_profits(min_profit=min_profit)
 
     def execute(self, params: dict[str, Any]) -> dict[str, Any]:
         symbol = str(params["symbol"])

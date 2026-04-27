@@ -640,19 +640,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ex_one_entry_per_bar.setChecked(False)
         form_exec_positions.addRow(self.ex_one_entry_per_bar)
 
-        self.ex_auto_close_boom_buy_profit = QtWidgets.QCheckBox(
-            "Auto-close profitable Boom BUY trades"
+        self.ex_auto_close_profits = QtWidgets.QCheckBox(
+            "Auto-close profits"
         )
-        self.ex_auto_close_boom_buy_profit.setChecked(True)
-        form_exec_positions.addRow(self.ex_auto_close_boom_buy_profit)
+        self.ex_auto_close_profits.setChecked(True)
+        form_exec_positions.addRow(self.ex_auto_close_profits)
 
-        self.ex_auto_close_boom_buy_profit_threshold = QtWidgets.QDoubleSpinBox()
-        self.ex_auto_close_boom_buy_profit_threshold.setDecimals(2)
-        self.ex_auto_close_boom_buy_profit_threshold.setRange(0.0, 1_000_000.0)
-        self.ex_auto_close_boom_buy_profit_threshold.setValue(0.0)
+        self.ex_auto_close_profits_threshold = QtWidgets.QDoubleSpinBox()
+        self.ex_auto_close_profits_threshold.setDecimals(2)
+        self.ex_auto_close_profits_threshold.setRange(0.0, 1_000_000.0)
+        self.ex_auto_close_profits_threshold.setValue(0.0)
         form_exec_positions.addRow(
             "Min profit to auto-close",
-            self.ex_auto_close_boom_buy_profit_threshold,
+            self.ex_auto_close_profits_threshold,
         )
 
         ex_right.addWidget(grp_exec_positions)
@@ -1107,8 +1107,8 @@ class MainWindow(QtWidgets.QMainWindow):
             enable_max_daily_trades=bool(self.ex_enable_daily_limits.isChecked()),
             max_daily_trades_per_symbol=int(self.ex_daily_trades_per_symbol.value()),
             max_daily_trades_total=int(self.ex_daily_trades_total.value()),
-            auto_close_profitable_boom_buys=bool(self.ex_auto_close_boom_buy_profit.isChecked()),
-            auto_close_profit_threshold=float(self.ex_auto_close_boom_buy_profit_threshold.value()) if hasattr(self, "ex_auto_close_boom_buy_profit_threshold") else 0.0,
+            auto_close_profits=bool(self.ex_auto_close_profits.isChecked()),
+            auto_close_profits_threshold=float(self.ex_auto_close_profits_threshold.value()) if hasattr(self, "ex_auto_close_profits_threshold") else 0.0,
         )
 
         self.chk_allow.stateChanged.connect(lambda _: self.log.write(f"[UI] Allow New Trades = {self.chk_allow.isChecked()}"))
@@ -2543,12 +2543,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     enable_max_daily_trades=bool(self.ex_enable_daily_limits.isChecked()),
                     max_daily_trades_per_symbol=int(self.ex_daily_trades_per_symbol.value()),
                     max_daily_trades_total=int(self.ex_daily_trades_total.value()),
-                    auto_close_profitable_boom_buys=bool(
-                        self.ex_auto_close_boom_buy_profit.isChecked()
+                    auto_close_profits=bool(
+                        self.ex_auto_close_profits.isChecked()
                     ),
-                    auto_close_profit_threshold=float(
-                        self.ex_auto_close_boom_buy_profit_threshold.value()
-                    ) if hasattr(self, "ex_auto_close_boom_buy_profit_threshold") else 0.0,
+                    auto_close_profits_threshold=float(
+                        self.ex_auto_close_profits_threshold.value()
+                    ) if hasattr(self, "ex_auto_close_profits_threshold") else 0.0,
                 )
 
             fixed = "ON" if self.executor.force_symbol_fixed_lot else "OFF"
@@ -2570,7 +2570,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "fixed_sl_tp={fixed_sl_tp} (offset {offset:g})\n"
                 "trailing={trailing} (trigger {trigger:.2f}R, distance {distance:.2f}R, step {step:.2f}R)\n"
                 "blocked_symbols={blocked}\n"
-                f"auto_close_boom_buy_profit={self.ex_auto_close_boom_buy_profit.isChecked()})"
+                f"auto_close_profits={self.ex_auto_close_profits.isChecked()})"
                 .format(
                     spread=spread,
                     max_spread=self.executor.max_spread_points,

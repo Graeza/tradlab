@@ -38,8 +38,8 @@ class Orchestrator:
         enable_max_daily_trades: bool = False,
         max_daily_trades_per_symbol: int = 0,
         max_daily_trades_total: int = 0,
-        auto_close_profitable_boom_buys: bool = False,
-        auto_close_profit_threshold: float = 0.0,
+        auto_close_profits: bool = False,
+        auto_close_profits_threshold: float = 0.0,
     ):
         self.pipeline = pipeline
         self.ensemble = ensemble
@@ -72,8 +72,8 @@ class Orchestrator:
         self._daily_trade_counts_by_symbol: dict[tuple[str, str], int] = {}
         self._daily_trade_count_total: dict[str, int] = {}
 
-        self.auto_close_profitable_boom_buys = bool(auto_close_profitable_boom_buys)
-        self.auto_close_profit_threshold = float(auto_close_profit_threshold)
+        self.auto_close_profits = bool(auto_close_profits)
+        self.auto_close_profits_threshold = float(auto_close_profits_threshold)
     
     def set_trade_session(self, session_id: int | None, started_at: datetime | None = None) -> None:
         self.current_session_id = session_id
@@ -91,8 +91,8 @@ class Orchestrator:
         enable_max_daily_trades: bool | None = None,
         max_daily_trades_per_symbol: int | None = None,
         max_daily_trades_total: int | None = None,
-        auto_close_profitable_boom_buys: bool | None = None,
-        auto_close_profit_threshold: float | None = None,
+        auto_close_profits: bool | None = None,
+        auto_close_profits_threshold: float | None = None,
 
     ) -> None:
         if enforce_single_position_per_symbol is not None:
@@ -113,10 +113,11 @@ class Orchestrator:
             self.max_daily_trades_per_symbol = max(0, int(max_daily_trades_per_symbol))
         if max_daily_trades_total is not None:
             self.max_daily_trades_total = max(0, int(max_daily_trades_total))
-        if auto_close_profitable_boom_buys is not None:
-            self.auto_close_profitable_boom_buys = bool(auto_close_profitable_boom_buys)
-        if auto_close_profit_threshold is not None:
-            self.auto_close_profit_threshold = float(auto_close_profit_threshold)
+        if auto_close_profits is not None:
+            self.auto_close_profits = bool(auto_close_profits)
+        if auto_close_profits_threshold is not None:
+            self.auto_close_profits_threshold = float(auto_close_profits_threshold)
+
     def _utc_now(self) -> datetime:
         return datetime.now(timezone.utc)
 
@@ -290,18 +291,18 @@ class Orchestrator:
             ):
                 self.log(f"[WARN] trailing stop check failed for {ev.get('symbol')}: {ev}")
 
-    def _auto_close_profitable_boom_buy_positions(self) -> None:
-        if not bool(self.auto_close_profitable_boom_buys):
+    def _auto_close_profits_positions(self) -> None:
+        if not bool(self.auto_close_profits):
             return
 
-        threshold = float(self.auto_close_profit_threshold or 0.0)
+        threshold = float(self.auto_close_profits_threshold or 0.0)
 
         try:
-            events = self.executor.auto_close_profitable_boom_buys(
+            events = self.executor.auto_close_profits(
                 min_profit=threshold
             )
         except Exception as e:
-            self.log(f"[WARN] auto-close profitable Boom buys failed: {e}")
+            self.log(f"[WARN] auto-close profits failed: {e}")
             return
 
         if not events:
@@ -318,7 +319,7 @@ class Orchestrator:
                 )
             else:
                 self.log(
-                    f"[WARN] auto-close failed for {symbol} BUY pos={ticket}: "
+                    f"[WARN] auto-close profits failed for {symbol} BUY pos={ticket}: "
                     f"{ev.get('reason') or ev.get('error') or ev}"
                 )
 
@@ -339,9 +340,9 @@ class Orchestrator:
             except Exception as e:
                 self.log(f"[WARN] pre-loop trailing management failed: {e}")
             try:
-                self._auto_close_profitable_boom_buy_positions()
+                self._auto_close_profits_positions()
             except Exception as e:
-                self.log(f"[WARN] pre-loop auto-close profitable Boom buys failed: {e}")
+                self.log(f"[WARN] pre-loop auto-close profits failed: {e}")
             for symbol in self.symbols:
                 if stop_event.is_set():
                     break
@@ -429,15 +430,15 @@ class Orchestrator:
                     except Exception as e:
                         self.log(f"[WARN] trailing management failed after {symbol}: {e}")
                     try:
-                        self._auto_close_profitable_boom_buy_positions()
+                        self._auto_close_profits_positions()
                     except Exception as e:
-                        self.log(f"[WARN] idle auto-close profitable Boom buys failed: {e}")
+                        self.log(f"[WARN] idle auto-close profits failed: {e}")
                 except Exception as e:
                     self.log(f"[ERROR] {symbol}: {e}")
 
             # responsive stop
             total = max(1, int(sleep_s))
-            for _ in range(total):
+            for tick in range(total):
                 if stop_event.is_set():
                     break
                 time.sleep(1)
@@ -445,5 +446,10 @@ class Orchestrator:
                     self._apply_trailing_stop_logic()
                 except Exception as e:
                     self.log(f"[WARN] idle trailing management failed: {e}")
+                if tick % 2 == 1:
+                    try:
+                        self._auto_close_profits_positions()
+                    except Exception as e:
+                        self.log(f"[WARN] timed auto-close profits failed: {e}")
 
         self.log("[BOT] Stopped")
