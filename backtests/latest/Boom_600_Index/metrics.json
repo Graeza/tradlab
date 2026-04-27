@@ -1,13 +1,13 @@
 {
   "metrics": {
     "start_equity": 10000.0,
-    "end_equity": 10134.547400000138,
-    "total_return": 0.013454740000013787,
-    "max_drawdown": -0.005125494212093709,
-    "n_trades": 1001,
-    "win_rate": 0.382,
-    "avg_trade_pnl": 0.13259939999999862,
-    "profit_factor": 1.1074471764277618
+    "end_equity": 10011.925399999967,
+    "total_return": 0.0011925399999968,
+    "max_drawdown": -0.012481079490318582,
+    "n_trades": 1076,
+    "win_rate": 0.3869767441860465,
+    "avg_trade_pnl": 0.009213395348832297,
+    "profit_factor": 1.0069865488970886
   },
   "extra": {
     "symbol": "Boom 600 Index",
@@ -52,8 +52,12 @@
       "session_start_hour": 0,
       "session_end_hour": 24,
       "allow_weekends": true,
+      "point_size": 0.01,
+      "default_spread_points": 0.0,
+      "slippage_points": 0.0,
+      "cancel_pending_on_session_block": true,
       "enable_spread_filter": true,
-      "exec_max_spread": 200,
+      "exec_max_spread": 2000,
       "force_fixed_lot": true,
       "fixed_sl_tp": true,
       "sl_tp_offset": 10.0,
@@ -65,7 +69,7 @@
       "retry_delay_ms": 250,
       "notes": [
         "retries and retry_delay_ms are informational only in deterministic backtests",
-        "spread filters are accepted for parity tracking but are no-op unless spread data is present in your historical bars",
+        "spread filters apply when spread data exists (or when default_spread_points is set)",
         "base_deviation_points is informational only in backtests"
       ]
     }

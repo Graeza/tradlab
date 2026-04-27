@@ -1,1 +1,1 @@
-prev_time,time,prev_dt,dt,delta_s,expected_s,missing_bars
+prev_time,time,prev_dt,dt,delta_s,expected_s,missing_bars,first_missing_time,last_missing_time,first_missing_dt,last_missing_dt,missing_times_utc
