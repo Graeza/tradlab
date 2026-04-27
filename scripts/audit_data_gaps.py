@@ -148,6 +148,9 @@ def _find_gaps(df: pd.DataFrame, expected_s: int) -> pd.DataFrame:
             columns=[
                 "prev_time", "time", "prev_dt", "dt",
                 "delta_s", "expected_s", "missing_bars",
+                "first_missing_time", "last_missing_time",
+                "first_missing_dt", "last_missing_dt",
+                "missing_times_utc",
             ]
         )
 
@@ -163,9 +166,23 @@ def _find_gaps(df: pd.DataFrame, expected_s: int) -> pd.DataFrame:
         return gaps
 
     gaps["missing_bars"] = ((gaps["delta_s"] // expected_s) - 1).astype(int)
+    gaps["first_missing_time"] = (gaps["prev_time"] + expected_s).astype(int)
+    gaps["last_missing_time"] = (gaps["time"] - expected_s).astype(int)
+    gaps["first_missing_dt"] = _to_utc_dt(gaps["first_missing_time"])
+    gaps["last_missing_dt"] = _to_utc_dt(gaps["last_missing_time"])
+
+    def _missing_times_for_gap(row: pd.Series) -> str:
+        times = range(int(row["first_missing_time"]), int(row["time"]), int(expected_s))
+        return "|".join(datetime.fromtimestamp(t, tz=timezone.utc).isoformat() for t in times)
+
+    gaps["missing_times_utc"] = gaps.apply(_missing_times_for_gap, axis=1)
+
     return gaps[[
         "prev_time", "time", "prev_dt", "dt",
         "delta_s", "expected_s", "missing_bars",
+        "first_missing_time", "last_missing_time",
+        "first_missing_dt", "last_missing_dt",
+        "missing_times_utc",
     ]].reset_index(drop=True)
 
 
@@ -319,7 +336,13 @@ def main():
 
             if gaps.empty:
                 pd.DataFrame(
-                    columns=["prev_time", "time", "prev_dt", "dt", "delta_s", "expected_s", "missing_bars"]
+                    columns=[
+                        "prev_time", "time", "prev_dt", "dt",
+                        "delta_s", "expected_s", "missing_bars",
+                        "first_missing_time", "last_missing_time",
+                        "first_missing_dt", "last_missing_dt",
+                        "missing_times_utc",
+                    ]
                 ).to_csv(gaps_csv_path, index=False)
             else:
                 gaps.to_csv(gaps_csv_path, index=False)
