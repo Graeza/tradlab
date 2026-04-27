@@ -184,6 +184,95 @@ class DecisionBus(QtCore.QObject):
     decision = QtCore.Signal(dict)  # payload dict
 
 
+class ManualOHLCDialog(QtWidgets.QDialog):
+    def __init__(self, parent: QtWidgets.QWidget | None = None, default_symbol: str = "", default_timeframe: int = 1):
+        super().__init__(parent)
+        self.setWindowTitle("Manual OHLC Entry")
+        self.setModal(True)
+        self.resize(420, 320)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+        layout.addLayout(form)
+
+        self.symbol = QtWidgets.QComboBox()
+        self.symbol.addItems(SYMBOL_LIST)
+        if default_symbol and default_symbol in SYMBOL_LIST:
+            self.symbol.setCurrentText(default_symbol)
+        form.addRow("Symbol", self.symbol)
+
+        self.timeframe = QtWidgets.QComboBox()
+        for tf in TIMEFRAME_LIST:
+            self.timeframe.addItem(str(tf), tf)
+        idx = self.timeframe.findData(default_timeframe)
+        if idx >= 0:
+            self.timeframe.setCurrentIndex(idx)
+        form.addRow("Timeframe", self.timeframe)
+
+        self.bar_time = QtWidgets.QDateTimeEdit()
+        self.bar_time.setCalendarPopup(True)
+        self.bar_time.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.bar_time.setTimeSpec(QtCore.Qt.TimeSpec.UTC)
+        self.bar_time.setDateTime(QtCore.QDateTime.currentDateTimeUtc())
+        form.addRow("Bar Time (UTC)", self.bar_time)
+
+        self.open_price = QtWidgets.QDoubleSpinBox()
+        self.open_price.setDecimals(8)
+        self.open_price.setMaximum(1_000_000_000)
+        form.addRow("Open", self.open_price)
+
+        self.high_price = QtWidgets.QDoubleSpinBox()
+        self.high_price.setDecimals(8)
+        self.high_price.setMaximum(1_000_000_000)
+        form.addRow("High", self.high_price)
+
+        self.low_price = QtWidgets.QDoubleSpinBox()
+        self.low_price.setDecimals(8)
+        self.low_price.setMaximum(1_000_000_000)
+        form.addRow("Low", self.low_price)
+
+        self.close_price = QtWidgets.QDoubleSpinBox()
+        self.close_price.setDecimals(8)
+        self.close_price.setMaximum(1_000_000_000)
+        form.addRow("Close", self.close_price)
+
+        self.tick_volume = QtWidgets.QDoubleSpinBox()
+        self.tick_volume.setDecimals(2)
+        self.tick_volume.setMaximum(1_000_000_000)
+        form.addRow("Tick Volume", self.tick_volume)
+
+        self.spread = QtWidgets.QDoubleSpinBox()
+        self.spread.setDecimals(2)
+        self.spread.setMaximum(1_000_000)
+        form.addRow("Spread", self.spread)
+
+        self.real_volume = QtWidgets.QDoubleSpinBox()
+        self.real_volume.setDecimals(2)
+        self.real_volume.setMaximum(1_000_000_000)
+        form.addRow("Real Volume", self.real_volume)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def payload(self) -> dict:
+        return {
+            "symbol": self.symbol.currentText().strip(),
+            "timeframe": int(self.timeframe.currentData()),
+            "time": int(self.bar_time.dateTime().toSecsSinceEpoch()),
+            "open": float(self.open_price.value()),
+            "high": float(self.high_price.value()),
+            "low": float(self.low_price.value()),
+            "close": float(self.close_price.value()),
+            "tick_volume": float(self.tick_volume.value()),
+            "spread": float(self.spread.value()),
+            "real_volume": float(self.real_volume.value()),
+        }
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -801,10 +890,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_run_backtest = QtWidgets.QPushButton("Run Backtest (next open fills)")
         self.btn_audit_data_gaps = QtWidgets.QPushButton("Audit DB Gaps")
         self.btn_backfill_data_gaps = QtWidgets.QPushButton("Backfill DB Gaps")
+        self.btn_manual_ohlc = QtWidgets.QPushButton("Manual OHLC Entry")
 
         bt_btn_row.addWidget(self.btn_run_backtest)
         bt_btn_row.addWidget(self.btn_audit_data_gaps)
         bt_btn_row.addWidget(self.btn_backfill_data_gaps)
+        bt_btn_row.addWidget(self.btn_manual_ohlc)
         bt_btn_row.addStretch(1)
 
         bt_layout.addLayout(bt_btn_row)
@@ -992,6 +1083,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_run_backtest.clicked.connect(self.run_backtest)
         self.btn_audit_data_gaps.clicked.connect(self.run_data_gap_audit)
         self.btn_backfill_data_gaps.clicked.connect(self.run_backfill_data_gaps)
+        self.btn_manual_ohlc.clicked.connect(self.open_manual_ohlc_dialog)
 
         # Risk/execution guard
         self.btn_apply_risk.clicked.connect(self.apply_risk_settings)
@@ -1174,6 +1266,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_run_backtest.setEnabled(enabled)
         if hasattr(self, "btn_audit_data_gaps"):
             self.btn_audit_data_gaps.setEnabled(enabled)
+        if hasattr(self, "btn_manual_ohlc"):
+            self.btn_manual_ohlc.setEnabled(enabled)
 
     def _run_next_backtest_job(self):
         if not getattr(self, "_bt_queue", None):
@@ -1238,6 +1332,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_audit_data_gaps.setEnabled(enabled)
         if hasattr(self, "btn_backfill_data_gaps"):
             self.btn_backfill_data_gaps.setEnabled(enabled)
+        if hasattr(self, "btn_manual_ohlc"):
+            self.btn_manual_ohlc.setEnabled(enabled)
 
     def _candidate_model_path(self) -> str:
         symbol = self.train_symbol.currentText().strip()
@@ -1743,6 +1839,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self._bt_results = []
         self._set_backtest_buttons_enabled(False)
         self._run_next_backtest_job()
+
+    @QtCore.Slot()
+    def open_manual_ohlc_dialog(self):
+        default_symbol = self.bt_symbol.currentText().strip() if hasattr(self, "bt_symbol") else ""
+        default_tf = int(self.bt_primary_tf.currentData()) if hasattr(self, "bt_primary_tf") else int(PRIMARY_TIMEFRAME)
+
+        dlg = ManualOHLCDialog(self, default_symbol=default_symbol, default_timeframe=default_tf)
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+
+        bar = dlg.payload()
+        if bar["high"] < max(bar["open"], bar["close"], bar["low"]):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid OHLC",
+                "High must be greater than or equal to open, close, and low.",
+            )
+            return
+        if bar["low"] > min(bar["open"], bar["close"], bar["high"]):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid OHLC",
+                "Low must be less than or equal to open, close, and high.",
+            )
+            return
+
+        try:
+            self.db.conn.execute(
+                """
+                INSERT INTO bars(symbol,timeframe,time,open,high,low,close,tick_volume,spread,real_volume)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(symbol,timeframe,time) DO UPDATE SET
+                  open=excluded.open,
+                  high=excluded.high,
+                  low=excluded.low,
+                  close=excluded.close,
+                  tick_volume=excluded.tick_volume,
+                  spread=excluded.spread,
+                  real_volume=excluded.real_volume
+                """,
+                (
+                    bar["symbol"],
+                    int(bar["timeframe"]),
+                    int(bar["time"]),
+                    float(bar["open"]),
+                    float(bar["high"]),
+                    float(bar["low"]),
+                    float(bar["close"]),
+                    float(bar["tick_volume"]),
+                    float(bar["spread"]),
+                    float(bar["real_volume"]),
+                ),
+            )
+            self.db.conn.commit()
+            ts_utc = datetime.fromtimestamp(int(bar["time"]), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            msg = f"Manual OHLC saved: {bar['symbol']} tf={bar['timeframe']} t={ts_utc}"
+            self.log.write(f"[MANUAL_OHLC] {msg}")
+            self.lbl_bt_status.setText(f"Backtest: {msg}")
+            self.lbl_bt_status.setStyleSheet("font-weight:600; color: green;")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save Failed", f"Could not save OHLC bar:\n{e}")
 
     @QtCore.Slot()
     def run_data_gap_audit(self):
