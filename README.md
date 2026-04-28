@@ -48,6 +48,18 @@ python -m scripts.train_all_symbols --strict-schema
 python -m scripts.train_all_symbols --validation-policy walk_forward --wf-folds 4 --wf-min-train-frac 0.5
 ```
 
+
+## Architecture visuals
+For a visual walkthrough of system structure and runtime behavior, see:
+
+- `docs/architecture.md`
+
+The document includes:
+- high-level component architecture
+- decision-loop sequence diagram
+- ML model selection flow
+- end-to-end data lifecycle
+
 ## Adding a new strategy
 1) Create `strategies/my_strategy.py` implementing `Strategy.evaluate(data_by_tf)`
 2) Add it in `core/main.py -> build_strategies()`
