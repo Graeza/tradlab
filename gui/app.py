@@ -1533,7 +1533,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"[UI] Applied strategies={[s.name for s in strategies]} weights={self.ensemble.weights} "
             f"min_conf={self.ensemble.min_conf} min_vote_gap={self.ensemble.min_vote_gap}"
         )
-        self.render_debug()
+        self.render_debug(self.cmb_symbol.currentText())
 
     # ---------- Experiments ----------
 
@@ -2419,7 +2419,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self, "refresh_experiments"):
                 self.refresh_experiments()
             if hasattr(self, "render_debug"):
-                self.render_debug()
+                self.render_debug(self.cmb_symbol.currentText())
 
         except Exception as e:
             self.log.write(f"[ML] Reload failed: {e}")
@@ -2793,7 +2793,8 @@ class MainWindow(QtWidgets.QMainWindow):
         item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft)
         return item
 
-    def render_debug(self, symbol: str):
+    def render_debug(self, symbol: Optional[str] = None):
+        symbol = symbol or self.cmb_symbol.currentText()
         payload = self.decisions.get(symbol)
         if not payload:
             self.lbl_final.setText("Final: —")
