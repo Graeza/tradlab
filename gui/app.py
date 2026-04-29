@@ -51,6 +51,14 @@ from utils.mt5_positions import close_positions, list_positions
 from utils.mt5_account import get_account_summary
 from utils.indicators import calculate_rsi, calculate_ema, calculate_macd
 
+
+
+def _qt_message_filter(mode, context, message):
+    if "QObject::connect(QStyleHints, QStyleHints): unique connections require a pointer to member function of a QObject subclass" in message:
+        return
+    QtCore.qDefaultMessageHandler(mode, context, message)
+
+
 class TrainWorker(QtCore.QObject):
     line = QtCore.Signal(str)
     finished = QtCore.Signal(bool, str)  # (ok, message)
@@ -3158,6 +3166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 def main():
+    QtCore.qInstallMessageHandler(_qt_message_filter)
     app = QtWidgets.QApplication(sys.argv)
     w = MainWindow()
     w.show()
