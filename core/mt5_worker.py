@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 import MetaTrader5 as mt5
 
-from config.settings import login as cfg_login, server as cfg_server, password as cfg_password
+from config.settings import get_mt5_credentials
 
 
 @dataclass
@@ -62,10 +62,13 @@ class MT5Client:
         password: str | None = None,
         *,
         initialize_on_start: bool = True,
+        profile: str | None = None,
     ):
+        cfg_login, cfg_server, cfg_password, cfg_profile = get_mt5_credentials(profile)
         self.login = int(login) if login is not None else int(cfg_login)
         self.server = str(server) if server is not None else str(cfg_server)
         self.password = str(password) if password is not None else str(cfg_password)
+        self.profile = cfg_profile
 
         self._worker = MT5Worker()
         self._started = False

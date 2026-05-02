@@ -1068,7 +1068,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Init MT5 (single-thread worker) and bot ---
         self.mt5 = MT5Client()
         self.mt5.start()
-        self.lbl_status.setText("MT5 connected")
+        self.lbl_status.setText(f"MT5 connected ({self.mt5.profile})")
 
         self.db = MarketDatabase(DB_PATH)
         self.fetcher = DataFetcher(self.mt5)
@@ -2730,8 +2730,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         cur = s.get("currency", "")
-        self.lbl_account.setText(f"Account: {s.get('login')} @ {s.get('server')} ({cur})")
-        self._set_badge(f"MT5: CONNECTED {s.get('login')}@{s.get('server')}", ok=True)
+        acct_profile = getattr(self.mt5, "profile", "DEMO")
+        is_live = str(acct_profile).upper() == "LIVE"
+        profile_tag = f"[{acct_profile}]"
+        self.lbl_account.setText(f"Account {profile_tag}: {s.get('login')} @ {s.get('server')} ({cur})")
+        self._set_badge(f"MT5: CONNECTED {profile_tag} {s.get('login')}@{s.get('server')}", ok=not is_live)
 
         bal = float(s.get("balance", 0.0) or 0.0)
         eq = float(s.get("equity", 0.0) or 0.0)
