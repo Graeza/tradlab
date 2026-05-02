@@ -74,10 +74,51 @@ LABEL_HORIZON_BARS = 12
 # --- Safety ---
 ALLOW_NEW_TRADES_DEFAULT = True   # GUI can override at runtime
 
-# --- MT5 Login ---
-login = int(kr.get_password("mt5", "login"))
-server = kr.get_password("mt5", "server")
-password = kr.get_password("mt5", "password")
+# --- MT5 Login / Account Profiles ---
+# Add credentials directly in config if preferred:
+# ACCOUNT_CREDENTIALS = {
+#   "DEMO": {"login": 12345678, "server": "Broker-Demo", "password": "demo-pass"},
+#   "LIVE": {"login": 87654321, "server": "Broker-Live", "password": "live-pass"},
+# }
+#
+# Safety defaults:
+# - ACTIVE_ACCOUNT_PROFILE is DEMO by default.
+# - LIVE profile is blocked unless ALLOW_LIVE_TRADING is True.
+ACTIVE_ACCOUNT_PROFILE = os.getenv("MT5_ACCOUNT_PROFILE", "DEMO").strip().upper()
+ALLOW_LIVE_TRADING = os.getenv("MT5_ALLOW_LIVE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+ACCOUNT_CREDENTIALS = {
+    "DEMO": {
+        "login": int(kr.get_password("mt5", "login")),
+        "server": kr.get_password("mt5", "server"),
+        "password": kr.get_password("mt5", "password"),
+    },
+    "LIVE": {
+        "login": int(kr.get_password("mt5_live", "login")) if kr.get_password("mt5_live", "login") else None,
+        "server": kr.get_password("mt5_live", "server"),
+        "password": kr.get_password("mt5_live", "password"),
+    },
+}
+
+
+def get_mt5_credentials(profile: str | None = None) -> tuple[int, str, str, str]:
+    resolved_profile = (profile or ACTIVE_ACCOUNT_PROFILE).strip().upper()
+    if resolved_profile not in ACCOUNT_CREDENTIALS:
+        raise ValueError(f"Unknown MT5 profile '{resolved_profile}'. Valid profiles: {list(ACCOUNT_CREDENTIALS)}")
+    if resolved_profile == "LIVE" and not ALLOW_LIVE_TRADING:
+        raise ValueError(
+            "LIVE profile is blocked by default for safety. Set ALLOW_LIVE_TRADING=True (or MT5_ALLOW_LIVE=1) to enable."
+        )
+
+    creds = ACCOUNT_CREDENTIALS[resolved_profile]
+    login = creds.get("login")
+    server = creds.get("server")
+    password = creds.get("password")
+
+    if not login or not server or not password:
+        raise ValueError(f"Incomplete credentials for MT5 profile '{resolved_profile}'.")
+
+    return int(login), str(server), str(password), resolved_profile
 
 # --- Regime gating multipliers (for ensemble weighting adjustments) ---
 REGIME_WEIGHT_MULTIPLIERS = {

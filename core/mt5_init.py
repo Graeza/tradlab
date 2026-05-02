@@ -1,14 +1,16 @@
 from __future__ import annotations
 import MetaTrader5 as mt5
-from config.settings import login as cfg_login, server as cfg_server, password as cfg_password
+from config.settings import get_mt5_credentials
 
 def initialize_mt5(
     login: int | None = None,
     server: str | None = None,
-    password: str | None = None
+    password: str | None = None,
+    profile: str | None = None,
 ) -> None:
     """Initialize MT5 terminal connection."""
 
+    cfg_login, cfg_server, cfg_password, _ = get_mt5_credentials(profile)
     login = login if login is not None else cfg_login
     server = server if server is not None else cfg_server
     password = password if password is not None else cfg_password
