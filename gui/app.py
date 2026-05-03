@@ -290,9 +290,9 @@ class AccountSwitchDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Switch MT5 Account")
         self.setModal(True)
-        self.resize(420, 180)
+        self.resize(390, 130)
         layout = QtWidgets.QVBoxLayout(self)
-        info = QtWidgets.QLabel("Choose account profile. LIVE may execute real-money orders.")
+        info = QtWidgets.QLabel("Choose your account profile. LIVE may execute real-money orders.")
         info.setWordWrap(True)
         layout.addWidget(info)
         self.profile = QtWidgets.QComboBox()
@@ -2559,7 +2559,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ans = QtWidgets.QMessageBox.warning(
                 self,
                 "Confirm LIVE trading",
-                "Switch to LIVE account? Orders can use real money.",
+                "Are you sure you want to switch to LIVE trading? Orders will use real money.",
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
                 QtWidgets.QMessageBox.StandardButton.No,
             )
