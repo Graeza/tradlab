@@ -1105,7 +1105,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Init MT5 (single-thread worker) and bot ---
         self.mt5 = MT5Client()
         self.mt5.start()
-        self.lbl_status.setText(f"MT5 connected ({self.mt5.profile})")
+        self._update_positions_status_label()
 
         self.db = MarketDatabase(DB_PATH)
         self.fetcher = DataFetcher(self.mt5)
@@ -2571,10 +2571,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if not ok:
                 raise RuntimeError(f"MT5 initialize() failed: {self.mt5.last_error()}")
             self.log.write(f"[MT5] Switched profile to {target_profile}.")
+            self._update_positions_status_label()
             self.refresh_portfolio()
             self.refresh_positions()
         except Exception as e:
             self.log.write(f"[MT5] Switch profile failed: {e}")
+
+    def _update_positions_status_label(self):
+        profile = str(getattr(self.mt5, "profile", "DEMO")).upper()
+        self.lbl_status.setText(f"MT5 connected ({profile})")
 
     # ---------- Risk / execution guard ----------
     @QtCore.Slot()
@@ -2706,6 +2711,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_positions(self):
+        self._update_positions_status_label()
         pos = list_positions(self.mt5)
         selected_tickets = set(self._selected_position_tickets())
 
