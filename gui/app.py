@@ -348,6 +348,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_allow = QtWidgets.QCheckBox("Allow New Trades")
         self.chk_allow.setChecked(True)
 
+        self.chk_allow_live = QtWidgets.QCheckBox("Allow Live Trading")
+        self.chk_allow_live.setChecked(False)
+        self.chk_allow_live.setToolTip("Required to execute orders while MT5 is on LIVE profile.")
+
         # MT5 status badge (auto-updated)
         self.lbl_mt5_badge = QtWidgets.QLabel("MT5: —")
         self.lbl_mt5_badge.setStyleSheet(
@@ -374,6 +378,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top.addWidget(self.btn_start)
         top.addWidget(self.btn_stop)
         top.addWidget(self.chk_allow)
+        top.addWidget(self.chk_allow_live)
         top.addWidget(self.lbl_mt5_badge)
         top.addWidget(self.btn_mt5_reconnect)
         top.addWidget(self.btn_switch_account)
@@ -1131,7 +1136,7 @@ class MainWindow(QtWidgets.QMainWindow):
             primary_tf=PRIMARY_TIMEFRAME,
             label_horizon_bars=LABEL_HORIZON_BARS,
             log=self.log.write,
-            allow_new_trades_getter=lambda: self.chk_allow.isChecked(),
+            allow_new_trades_getter=lambda: self.chk_allow.isChecked() and (str(getattr(self.mt5, "profile", "DEMO")).upper() != "LIVE" or self.chk_allow_live.isChecked()),
             decision_callback=lambda symbol, final, outputs: self.bus.decision.emit({
                 "symbol": symbol,
                 "final": final,
@@ -1151,6 +1156,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self.chk_allow.stateChanged.connect(lambda _: self.log.write(f"[UI] Allow New Trades = {self.chk_allow.isChecked()}"))
+        self.chk_allow_live.stateChanged.connect(lambda _: self.log.write(f"[UI] Allow Live Trading = {self.chk_allow_live.isChecked()}"))
 
         self.controller = BotController(self.orch)
         self.tbl_sessions.itemSelectionChanged.connect(self.on_trade_session_selected)
@@ -1214,9 +1220,13 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return os.path.abspath(os.path.join(project_root, "ml", "experiments", "experiments.jsonl"))
 
-    def _set_badge(self, text: str, ok: bool):
+    def _set_badge(self, text: str, ok: bool, live: bool = False):
         self.lbl_mt5_badge.setText(text)
-        if ok:
+        if live:
+            self.lbl_mt5_badge.setStyleSheet(
+                "padding:4px 8px; border-radius:10px; font-weight:600; background:#b8860b; color:white;"
+            )
+        elif ok:
             self.lbl_mt5_badge.setStyleSheet(
                 "padding:4px 8px; border-radius:10px; font-weight:600; background:#1f7a1f; color:white;"
             )
@@ -2797,7 +2807,11 @@ class MainWindow(QtWidgets.QMainWindow):
         is_live = str(acct_profile).upper() == "LIVE"
         profile_tag = f"[{acct_profile}]"
         self.lbl_account.setText(f"Account {profile_tag}: {s.get('login')} @ {s.get('server')} ({cur})")
-        self._set_badge(f"MT5: CONNECTED {profile_tag} {s.get('login')}@{s.get('server')}", ok=not is_live)
+        self._set_badge(
+            f"MT5: CONNECTED {profile_tag} {s.get('login')}@{s.get('server')}",
+            ok=True,
+            live=is_live,
+        )
 
         bal = float(s.get("balance", 0.0) or 0.0)
         eq = float(s.get("equity", 0.0) or 0.0)
