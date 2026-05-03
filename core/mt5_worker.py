@@ -105,6 +105,16 @@ class MT5Client:
     def initialize(self, **kwargs: Any) -> bool:
         return bool(self._call(mt5.initialize, **kwargs))
 
+    def switch_profile(self, profile: str) -> bool:
+        login, server, password, resolved_profile = get_mt5_credentials(profile)
+        ok = self.initialize(login=login, server=server, password=password)
+        if ok:
+            self.login = int(login)
+            self.server = str(server)
+            self.password = str(password)
+            self.profile = str(resolved_profile)
+        return bool(ok)
+
     def last_error(self) -> Any:
         # last_error() is cheap, but keep it serialized for consistency
         return self._call(mt5.last_error)
