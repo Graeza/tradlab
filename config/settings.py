@@ -87,6 +87,17 @@ ALLOW_NEW_TRADES_DEFAULT = True   # GUI can override at runtime
 ACTIVE_ACCOUNT_PROFILE = os.getenv("MT5_ACCOUNT_PROFILE", "DEMO").strip().upper()
 ALLOW_LIVE_TRADING = os.getenv("MT5_ALLOW_LIVE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
+
+def is_live_trading_allowed() -> bool:
+    """Return current LIVE-trading gate, allowing runtime override from env."""
+    return os.getenv("MT5_ALLOW_LIVE", "1" if ALLOW_LIVE_TRADING else "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def set_live_trading_allowed(enabled: bool) -> None:
+    """Persist runtime LIVE-trading toggle for current process."""
+    os.environ["MT5_ALLOW_LIVE"] = "1" if enabled else "0"
+
+
 ACCOUNT_CREDENTIALS = {
     "DEMO": {
         "login": int(kr.get_password("mt5", "login")),
@@ -105,7 +116,7 @@ def get_mt5_credentials(profile: str | None = None) -> tuple[int, str, str, str]
     resolved_profile = (profile or ACTIVE_ACCOUNT_PROFILE).strip().upper()
     if resolved_profile not in ACCOUNT_CREDENTIALS:
         raise ValueError(f"Unknown MT5 profile '{resolved_profile}'. Valid profiles: {list(ACCOUNT_CREDENTIALS)}")
-    if resolved_profile == "LIVE" and not ALLOW_LIVE_TRADING:
+    if resolved_profile == "LIVE" and not is_live_trading_allowed():
         raise ValueError(
             "LIVE profile is blocked by default for safety. Set ALLOW_LIVE_TRADING=True (or MT5_ALLOW_LIVE=1) to enable."
         )
