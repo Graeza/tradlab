@@ -284,6 +284,35 @@ class ManualOHLCDialog(QtWidgets.QDialog):
         }
 
 
+class AccountSwitchDialog(QtWidgets.QDialog):
+    def __init__(self, current_profile: str, parent: QtWidgets.QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Switch MT5 Account")
+        self.setModal(True)
+        self.resize(420, 180)
+        layout = QtWidgets.QVBoxLayout(self)
+        info = QtWidgets.QLabel("Choose account profile. LIVE may execute real-money orders.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        self.profile = QtWidgets.QComboBox()
+        self.profile.addItems(["DEMO", "LIVE"])
+        idx = self.profile.findText(str(current_profile).upper())
+        if idx >= 0:
+            self.profile.setCurrentIndex(idx)
+        form = QtWidgets.QFormLayout()
+        form.addRow("Account Profile", self.profile)
+        layout.addLayout(form)
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def selected_profile(self) -> str:
+        return self.profile.currentText().strip().upper()
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -325,6 +354,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "padding:2px 4px; border-radius:6px; font-weight:600; background:#555; color:white;"
         )
         self.btn_mt5_reconnect = QtWidgets.QPushButton("Reconnect MT5")
+        self.btn_switch_account = QtWidgets.QPushButton("Switch Account")
         self.lbl_now = QtWidgets.QLabel("Time: —")
         self.lbl_now.setStyleSheet("font-weight:600; color: gray;")
 
@@ -346,6 +376,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top.addWidget(self.chk_allow)
         top.addWidget(self.lbl_mt5_badge)
         top.addWidget(self.btn_mt5_reconnect)
+        top.addWidget(self.btn_switch_account)
         top.addWidget(self.lbl_now)
         top.addStretch(1)
         top.addWidget(self.btn_refresh)
@@ -1135,6 +1166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_close_selected.clicked.connect(self.close_positions_by_mode)
         self.btn_refresh.clicked.connect(self.refresh_positions)
         self.btn_mt5_reconnect.clicked.connect(self.reconnect_mt5)
+        self.btn_switch_account.clicked.connect(self.open_account_switch_dialog)
 
         # Strategy/experiments/backtest
         self.btn_apply_strat.clicked.connect(self.apply_strategy_settings)
@@ -2494,6 +2526,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_portfolio()
         except Exception as e:
             self.log.write(f"[MT5] Reconnect failed: {e}")
+
+    @QtCore.Slot()
+    def open_account_switch_dialog(self):
+        dlg = AccountSwitchDialog(getattr(self.mt5, "profile", "DEMO"), self)
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        target_profile = dlg.selected_profile()
+        current_profile = str(getattr(self.mt5, "profile", "DEMO")).upper()
+        if target_profile == current_profile:
+            self.log.write(f"[MT5] Already on {target_profile} profile.")
+            return
+        if target_profile == "LIVE":
+            ans = QtWidgets.QMessageBox.warning(
+                self,
+                "Confirm LIVE trading",
+                "Switch to LIVE account? Orders can use real money.",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No,
+            )
+            if ans != QtWidgets.QMessageBox.StandardButton.Yes:
+                self.log.write("[MT5] LIVE profile switch cancelled.")
+                return
+        try:
+            ok = self.mt5.switch_profile(target_profile)
+            if not ok:
+                raise RuntimeError(f"MT5 initialize() failed: {self.mt5.last_error()}")
+            self.log.write(f"[MT5] Switched profile to {target_profile}.")
+            self.refresh_portfolio()
+            self.refresh_positions()
+        except Exception as e:
+            self.log.write(f"[MT5] Switch profile failed: {e}")
 
     # ---------- Risk / execution guard ----------
     @QtCore.Slot()
