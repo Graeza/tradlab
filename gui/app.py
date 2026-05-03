@@ -42,7 +42,8 @@ from config.settings import (
     SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
     DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, FEATURE_SET_VERSION, ML_REQUIRE_SYMBOL_MODEL, ML_MIN_CANDIDATE_ACCURACY,
     ENSEMBLE_MIN_CONF, ENSEMBLE_MIN_VOTE_GAP, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS, 
-    DATA_QUALITY_OUT_DIR,BACKTEST_STARTING_CASH, BACKTEST_WARMUP_BARS, BACKTEST_OUT_DIR
+    DATA_QUALITY_OUT_DIR,BACKTEST_STARTING_CASH, BACKTEST_WARMUP_BARS, BACKTEST_OUT_DIR,
+    is_live_trading_allowed, set_live_trading_allowed
 )
 
 from risk_manager import RiskManager
@@ -349,7 +350,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_allow.setChecked(True)
 
         self.chk_allow_live = QtWidgets.QCheckBox("Allow Live Trading")
-        self.chk_allow_live.setChecked(False)
+        self.chk_allow_live.setChecked(bool(is_live_trading_allowed()))
         self.chk_allow_live.setToolTip("Required to execute orders while MT5 is on LIVE profile.")
 
         # MT5 status badge (auto-updated)
@@ -1156,7 +1157,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self.chk_allow.stateChanged.connect(lambda _: self.log.write(f"[UI] Allow New Trades = {self.chk_allow.isChecked()}"))
-        self.chk_allow_live.stateChanged.connect(lambda _: self.log.write(f"[UI] Allow Live Trading = {self.chk_allow_live.isChecked()}"))
+        self.chk_allow_live.stateChanged.connect(self.on_allow_live_toggled)
 
         self.controller = BotController(self.orch)
         self.tbl_sessions.itemSelectionChanged.connect(self.on_trade_session_selected)
@@ -2521,6 +2522,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.refresh_trade_sessions(select_session_id=self.trade_session_id)
         self._show_session_trade_report(report)
+
+
+    @QtCore.Slot()
+    def on_allow_live_toggled(self):
+        enabled = self.chk_allow_live.isChecked()
+        set_live_trading_allowed(enabled)
+        self.log.write(f"[UI] Allow Live Trading = {enabled}")
 
     @QtCore.Slot()
     def reconnect_mt5(self):
