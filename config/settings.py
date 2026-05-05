@@ -16,14 +16,19 @@ SYMBOL_LIST = [
     "Boom 900 Index",
     "Boom 500 Index",
     "Boom 600 Index",
-    "Boom 300 Index"
+    "Boom 300 Index",
+    "Wall Street 30",
+    "XAUUSD",
 ]
 
 TIMEFRAME_LIST = [
     mt5.TIMEFRAME_M5,
     mt5.TIMEFRAME_M15,
+    mt5.TIMEFRAME_M30,
     mt5.TIMEFRAME_H1,
     mt5.TIMEFRAME_H4,
+    mt5.TIMEFRAME_D1,
+    mt5.TIMEFRAME_W1,
 ]
 
 PRIMARY_TIMEFRAME = mt5.TIMEFRAME_M5
