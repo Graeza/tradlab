@@ -48,6 +48,7 @@ from config.settings import (
     BACKTEST_STARTING_CASH,
     BACKTEST_WARMUP_BARS,
     BACKTEST_OUT_DIR,
+    NEW_SYMBOL_STRATEGY_SYMBOLS,
 )
 
 from core.database import MarketDatabase
@@ -58,6 +59,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 
 from backtest.data_source import load_bars_from_db
 from backtest.broker import SimBroker
@@ -106,22 +108,26 @@ def build_strategies(
     ml_model_path: str | None = None,
 ):
     strategies = []
+    is_new_symbol = str(symbol) in set(NEW_SYMBOL_STRATEGY_SYMBOLS)
 
-    if use_rsi:
-        strategies.append(RSIEMAStrategy())
+    if is_new_symbol:
+        strategies.append(RSI3MAExtremeStrategy())
+    else:
+        if use_rsi:
+            strategies.append(RSIEMAStrategy())
 
-    if use_breakout:
-        strategies.append(BreakoutStrategy())
+        if use_breakout:
+            strategies.append(BreakoutStrategy())
 
-    if use_boom:
-        strategies.append(BoomSpikeTrendStrategy())
+        if use_boom:
+            strategies.append(BoomSpikeTrendStrategy())
 
-    if use_boom_sell:
-        strategies.append(BoomSellDecayStrategy())
+        if use_boom_sell:
+            strategies.append(BoomSellDecayStrategy())
 
     chosen_ml_path = str(ml_model_path or "").strip() or None
 
-    if use_ml and USE_ML_STRATEGY:
+    if (not is_new_symbol) and use_ml and USE_ML_STRATEGY:
         registry = MLModelRegistry(
             candidates_dir=str(ML_CANDIDATES_DIR),
             fallback_model_path=str(ML_MODEL_PATH),
@@ -259,6 +265,7 @@ def main() -> None:
             "ML": float(args.weight_ml),
             "BOOM_SPIKE_TREND": float(args.weight_boom),
             "BOOM_SELL_DECAY": float(args.weight_boom_sell),
+            "RSI3_MA_EXTREME": float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)),
         },
         min_conf=float(args.ensemble_min_conf),
         min_vote_gap=max(0.0, min(1.0, float(args.min_vote_gap))),

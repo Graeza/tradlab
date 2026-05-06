@@ -21,6 +21,13 @@ SYMBOL_LIST = [
     "XAUUSD",
 ]
 
+# Symbols added outside the Boom synthetic universe use a dedicated daily
+# RSI(3)/RSI-MA(3) strategy instead of the Boom-focused strategy stack.
+NEW_SYMBOL_STRATEGY_SYMBOLS = [
+    "Wall Street 30",
+    "XAUUSD",
+]
+
 TIMEFRAME_LIST = [
     mt5.TIMEFRAME_M5,
     mt5.TIMEFRAME_M15,
@@ -70,6 +77,7 @@ STRATEGY_WEIGHTS = {
     "ML": 1.2,
     "BOOM_SPIKE_TREND": 1.3,
     "BOOM_SELL_DECAY": 1.45,
+    "RSI3_MA_EXTREME": 1.0,
 }
 
 # --- Labeling ---
