@@ -37,9 +37,11 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
+from strategies.symbol_scoped import SymbolScopedStrategy
 
 from config.settings import (
-    SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS,
+    SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS, NEW_SYMBOL_STRATEGY_SYMBOLS,
     DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, FEATURE_SET_VERSION, ML_REQUIRE_SYMBOL_MODEL, ML_MIN_CANDIDATE_ACCURACY,
     ENSEMBLE_MIN_CONF, ENSEMBLE_MIN_VOTE_GAP, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS, 
     DATA_QUALITY_OUT_DIR,BACKTEST_STARTING_CASH, BACKTEST_WARMUP_BARS, BACKTEST_OUT_DIR,
@@ -1516,19 +1518,23 @@ class MainWindow(QtWidgets.QMainWindow):
             "BoomSellDecayStrategy": True,
         }
 
+        new_symbol_set = set(NEW_SYMBOL_STRATEGY_SYMBOLS)
+        legacy_symbols = [s for s in SYMBOL_LIST if s not in new_symbol_set]
         strategies = []
 
         if enabled.get("RSIEMAStrategy", True):
-            strategies.append(RSIEMAStrategy())
+            strategies.append(SymbolScopedStrategy(RSIEMAStrategy(), allowed_symbols=legacy_symbols))
 
         if enabled.get("BreakoutStrategy", True):
-            strategies.append(BreakoutStrategy())
+            strategies.append(SymbolScopedStrategy(BreakoutStrategy(), allowed_symbols=legacy_symbols))
 
         if enabled.get("BoomSpikeTrendStrategy", True):
-            strategies.append(BoomSpikeTrendStrategy())
+            strategies.append(SymbolScopedStrategy(BoomSpikeTrendStrategy(), allowed_symbols=legacy_symbols))
 
         if enabled.get("BoomSellDecayStrategy", True):
-            strategies.append(BoomSellDecayStrategy())
+            strategies.append(SymbolScopedStrategy(BoomSellDecayStrategy(), allowed_symbols=legacy_symbols))
+
+        strategies.append(SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS))
 
         if enabled.get("MLStrategy", True) and USE_ML_STRATEGY:
             try:
@@ -1540,10 +1546,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     log=self.log.write,
                 )
                 strategies.append(
-                    MLStrategy(
-                        model=None,
-                        bundle_registry=registry,
-                        default_primary_tf=int(PRIMARY_TIMEFRAME),
+                    SymbolScopedStrategy(
+                        MLStrategy(
+                            model=None,
+                            bundle_registry=registry,
+                            default_primary_tf=int(PRIMARY_TIMEFRAME),
+                        ),
+                        allowed_symbols=legacy_symbols,
                     )
                 )
                 self.log.write(
@@ -1576,6 +1585,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "ML": float(self.w_ml.value()),
             "BOOM_SPIKE_TREND": float(self.w_boom.value()),
             "BOOM_SELL_DECAY": float(self.w_boom_sell.value()),
+            "RSI3_MA_EXTREME": float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)),
         }
         self.ensemble.min_conf = float(self.spin_min_conf.value())
         self.ensemble.min_vote_gap = float(self.spin_min_vote_gap.value())
