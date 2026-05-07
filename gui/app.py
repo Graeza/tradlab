@@ -425,11 +425,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_use_boom_sell = QtWidgets.QCheckBox("Enable Boom Sell Decay strategy")
         self.chk_use_boom_sell.setChecked(True)
 
+        self.chk_use_rsi3_ma_extreme = QtWidgets.QCheckBox("Enable RSI(3)/RSI-MA Extreme strategy")
+        self.chk_use_rsi3_ma_extreme.setChecked(True)
+
         strat_layout.addWidget(self.chk_use_rsi)
         strat_layout.addWidget(self.chk_use_breakout)
         strat_layout.addWidget(self.chk_use_ml)
         strat_layout.addWidget(self.chk_use_boom)
         strat_layout.addWidget(self.chk_use_boom_sell)
+        strat_layout.addWidget(self.chk_use_rsi3_ma_extreme)
 
         wgrp = QtWidgets.QGroupBox("Strategy Weights (base)")
         wform = QtWidgets.QFormLayout(wgrp)
@@ -459,11 +463,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.w_boom_sell.setSingleStep(0.1)
         self.w_boom_sell.setValue(float(STRATEGY_WEIGHTS.get("BOOM_SELL_DECAY", 1.45)))
 
+        self.w_rsi3_ma_extreme = QtWidgets.QDoubleSpinBox()
+        self.w_rsi3_ma_extreme.setRange(0.0, 100.0)
+        self.w_rsi3_ma_extreme.setSingleStep(0.1)
+        self.w_rsi3_ma_extreme.setValue(float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)))
+
         wform.addRow("RSI/EMA", self.w_rsi)
         wform.addRow("Breakout", self.w_breakout)
         wform.addRow("ML", self.w_ml)
         wform.addRow("Boom Spike/Trend", self.w_boom)
         wform.addRow("Boom Sell Decay", self.w_boom_sell)
+        wform.addRow("RSI(3)/RSI-MA Extreme", self.w_rsi3_ma_extreme)
         strat_layout.addWidget(wgrp)
 
         self.spin_min_conf = QtWidgets.QDoubleSpinBox()
@@ -1516,6 +1526,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "MLStrategy": bool(USE_ML_STRATEGY),
             "BoomSpikeTrendStrategy": True,
             "BoomSellDecayStrategy": True,
+            "RSI3MAExtremeStrategy": True,
         }
 
         new_symbol_set = set(NEW_SYMBOL_STRATEGY_SYMBOLS)
@@ -1534,7 +1545,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if enabled.get("BoomSellDecayStrategy", True):
             strategies.append(SymbolScopedStrategy(BoomSellDecayStrategy(), allowed_symbols=legacy_symbols))
 
-        strategies.append(SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS))
+        if enabled.get("RSI3MAExtremeStrategy", True):
+            strategies.append(SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS))
 
         if enabled.get("MLStrategy", True) and USE_ML_STRATEGY:
             try:
@@ -1573,6 +1585,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "MLStrategy": self.chk_use_ml.isChecked(),
             "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
             "BoomSellDecayStrategy": self.chk_use_boom_sell.isChecked(),
+            "RSI3MAExtremeStrategy": self.chk_use_rsi3_ma_extreme.isChecked(),
         }
 
         strategies = self._build_strategies(enabled=enabled)
@@ -1585,7 +1598,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "ML": float(self.w_ml.value()),
             "BOOM_SPIKE_TREND": float(self.w_boom.value()),
             "BOOM_SELL_DECAY": float(self.w_boom_sell.value()),
-            "RSI3_MA_EXTREME": float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)),
+            "RSI3_MA_EXTREME": float(self.w_rsi3_ma_extreme.value()),
         }
         self.ensemble.min_conf = float(self.spin_min_conf.value())
         self.ensemble.min_vote_gap = float(self.spin_min_vote_gap.value())
@@ -2448,6 +2461,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "BreakoutStrategy": self.chk_use_breakout.isChecked(),
                 "MLStrategy": self.chk_use_ml.isChecked(),
                 "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
+                "BoomSellDecayStrategy": self.chk_use_boom_sell.isChecked(),
+                "RSI3MAExtremeStrategy": self.chk_use_rsi3_ma_extreme.isChecked(),
             }
 
             # Preserve existing ensemble knobs if available
