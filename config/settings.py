@@ -11,22 +11,34 @@ def _project_path(*parts: str) -> str:
     return os.path.join(PROJECT_ROOT, *parts)
 
 # --- Trading universe ---
-SYMBOL_LIST = [
+BOOM_SYMBOLS = [
     "Boom 1000 Index",
     "Boom 900 Index",
     "Boom 500 Index",
     "Boom 600 Index",
     "Boom 300 Index",
-    "Wall Street 30",
-    "XAUUSD",
 ]
 
-# Symbols added outside the Boom synthetic universe use a dedicated daily
-# RSI(3)/RSI-MA(3) strategy instead of the Boom-focused strategy stack.
+# Crash synthetic indices are included in the trading universe for data
+# collection/backtesting, but Crash-specific reversed strategies are not wired
+# in yet. Keep Boom-specific strategy wiring scoped to BOOM_SYMBOLS until the
+# mirrored Crash strategy phase is implemented.
+CRASH_SYMBOLS = [
+    "Crash 1000 Index",
+    "Crash 900 Index",
+    "Crash 500 Index",
+    "Crash 600 Index",
+    "Crash 300 Index",
+]
+
+# Symbols added outside the Boom/Crash synthetic universe use a dedicated daily
+# RSI(3)/RSI-MA(3) strategy instead of the synthetic-focused strategy stack.
 NEW_SYMBOL_STRATEGY_SYMBOLS = [
     "Wall Street 30",
     "XAUUSD",
 ]
+
+SYMBOL_LIST = BOOM_SYMBOLS + CRASH_SYMBOLS + NEW_SYMBOL_STRATEGY_SYMBOLS
 
 TIMEFRAME_LIST = [
     mt5.TIMEFRAME_M5,

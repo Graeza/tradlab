@@ -19,7 +19,7 @@ from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 from strategies.symbol_scoped import SymbolScopedStrategy
 
 from config.settings import (
-    SYMBOL_LIST, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS, NEW_SYMBOL_STRATEGY_SYMBOLS,
+    SYMBOL_LIST, BOOM_SYMBOLS, CRASH_SYMBOLS, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS, NEW_SYMBOL_STRATEGY_SYMBOLS,
     DB_PATH, USE_ML_STRATEGY, ML_MODEL_PATH, ML_CANDIDATES_DIR, ML_REQUIRE_SYMBOL_MODEL, ML_MIN_CANDIDATE_ACCURACY,
     ENSEMBLE_MIN_CONF, STRATEGY_WEIGHTS, LABEL_HORIZON_BARS, REGIME_WEIGHT_MULTIPLIERS
 )
@@ -29,12 +29,11 @@ from trade_executor import TradeExecutor
 
 
 def build_strategies():
-    new_symbol_set = set(NEW_SYMBOL_STRATEGY_SYMBOLS)
-    legacy_symbols = [s for s in SYMBOL_LIST if s not in new_symbol_set]
+    synthetic_symbols = list(BOOM_SYMBOLS) + list(CRASH_SYMBOLS)
 
     strategies = [
-        SymbolScopedStrategy(RSIEMAStrategy(), allowed_symbols=legacy_symbols),
-        SymbolScopedStrategy(BreakoutStrategy(), allowed_symbols=legacy_symbols),
+        SymbolScopedStrategy(RSIEMAStrategy(), allowed_symbols=synthetic_symbols),
+        SymbolScopedStrategy(BreakoutStrategy(), allowed_symbols=synthetic_symbols),
         SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS),
     ]
 
@@ -53,7 +52,7 @@ def build_strategies():
                     bundle_registry=registry,
                     default_primary_tf=int(PRIMARY_TIMEFRAME),
                 ),
-                allowed_symbols=legacy_symbols,
+                allowed_symbols=synthetic_symbols,
             )
         )
     else:
