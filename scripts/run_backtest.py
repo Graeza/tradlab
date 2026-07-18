@@ -48,6 +48,7 @@ from config.settings import (
     BACKTEST_STARTING_CASH,
     BACKTEST_WARMUP_BARS,
     BACKTEST_OUT_DIR,
+    BOOM_SYMBOLS,
     NEW_SYMBOL_STRATEGY_SYMBOLS,
 )
 
@@ -109,6 +110,7 @@ def build_strategies(
 ):
     strategies = []
     is_new_symbol = str(symbol) in set(NEW_SYMBOL_STRATEGY_SYMBOLS)
+    is_boom_symbol = str(symbol) in set(BOOM_SYMBOLS)
 
     if is_new_symbol:
         strategies.append(RSI3MAExtremeStrategy())
@@ -119,10 +121,10 @@ def build_strategies(
         if use_breakout:
             strategies.append(BreakoutStrategy())
 
-        if use_boom:
+        if is_boom_symbol and use_boom:
             strategies.append(BoomSpikeTrendStrategy())
 
-        if use_boom_sell:
+        if is_boom_symbol and use_boom_sell:
             strategies.append(BoomSellDecayStrategy())
 
     chosen_ml_path = str(ml_model_path or "").strip() or None
