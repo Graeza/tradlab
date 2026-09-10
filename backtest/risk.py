@@ -31,6 +31,7 @@ class BacktestRiskManager:
         max_spread_points: int = 0,
         base_deviation_points: int = 0,
         force_symbol_fixed_lot: bool = False,
+        minimum_lot: float = 0.0,
         boom_crash_fixed_sl_tp: bool = False,
         boom_crash_sl_tp_offset: float = 0.0,
         enable_spread_filter: bool = False,
@@ -45,19 +46,11 @@ class BacktestRiskManager:
         self.max_spread_points = int(max_spread_points)
         self.base_deviation_points = int(base_deviation_points)
         self.force_symbol_fixed_lot = bool(force_symbol_fixed_lot)
+        self.minimum_lot = max(0.0, float(minimum_lot))
         self.boom_crash_fixed_sl_tp = bool(boom_crash_fixed_sl_tp)
         self.boom_crash_sl_tp_offset = float(boom_crash_sl_tp_offset)
         self.enable_spread_filter = bool(enable_spread_filter)
         self.exec_max_spread_points = int(exec_max_spread_points)
-
-    @staticmethod
-    def _fixed_lot_for_symbol(symbol: str) -> Optional[float]:
-        s = str(symbol or "").lower()
-        if "boom 1000" in s or "boom 900" in s or "boom 500" in s or "boom 600" in s:
-            return 0.2
-        if "boom 300" in s:
-            return 0.5
-        return None
 
     def assess(
         self,
@@ -115,9 +108,8 @@ class BacktestRiskManager:
             return None
 
         if self.force_symbol_fixed_lot:
-            fixed_qty = self._fixed_lot_for_symbol(symbol)
-            if fixed_qty is not None and fixed_qty > 0:
-                qty = float(fixed_qty)
+            if self.minimum_lot > 0:
+                qty = self.minimum_lot
 
         if action == "BUY":
             sl = entry_price - sl_dist

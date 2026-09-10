@@ -37,6 +37,10 @@ def build_strategies():
     strategies = [
         SymbolScopedStrategy(RSIEMAStrategy(), allowed_symbols=synthetic_symbols),
         SymbolScopedStrategy(BreakoutStrategy(), allowed_symbols=synthetic_symbols),
+        SymbolScopedStrategy(BoomSpikeTrendStrategy(), allowed_symbols=BOOM_SYMBOLS),
+        SymbolScopedStrategy(BoomSellDecayStrategy(), allowed_symbols=BOOM_SYMBOLS),
+        SymbolScopedStrategy(CrashSpikeTrendStrategy(), allowed_symbols=CRASH_SYMBOLS),
+        SymbolScopedStrategy(CrashBuyRecoveryStrategy(), allowed_symbols=CRASH_SYMBOLS),
         SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS),
     ]
 

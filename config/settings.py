@@ -19,10 +19,9 @@ BOOM_SYMBOLS = [
     "Boom 300 Index",
 ]
 
-# Crash synthetic indices are included in the trading universe for data
-# collection/backtesting, but Crash-specific reversed strategies are not wired
-# in yet. Keep Boom-specific strategy wiring scoped to BOOM_SYMBOLS until the
-# mirrored Crash strategy phase is implemented.
+# Crash synthetic indices use directional mirrors of the Boom-specific
+# strategies. Keeping separate symbol groups prevents either directional stack
+# from running against the wrong family of indices.
 CRASH_SYMBOLS = [
     "Crash 1000 Index",
     "Crash 900 Index",

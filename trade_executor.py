@@ -65,21 +65,13 @@ class TradeExecutor:
         self.trailing_step_rr = max(0.0, float(trailing_step_rr))
         self.blocked_symbols: set[str] = blocked_symbols if blocked_symbols is not None else set()
 
-    def _fixed_lot_for_symbol(self, symbol: str) -> Optional[float]:
-        s = symbol.lower()
-        if "boom 1000" in s or "boom 900" in s or "boom 500" in s or "boom 600" in s:
-            return 0.2
-        if "boom 300" in s:
-            return 0.5
-        return None
-
-    def _min_allowed_lot_for_symbol(self, symbol: str) -> float:
-        s = symbol.lower()
-        if "boom 1000" in s or "boom 900" in s or "boom 500" in s or "boom 600" in s:
-            return 0.2
-        if "boom 300" in s:
-            return 0.5
-        return 0.0  # disabled for other symbols
+    def _minimum_lot_for_symbol(self, symbol: str) -> Optional[float]:
+        """Return the broker-advertised minimum volume for any symbol."""
+        info = self.mt5.symbol_info(symbol)
+        if info is None:
+            return None
+        minimum = float(getattr(info, "volume_min", 0.0) or 0.0)
+        return minimum if minimum > 0.0 else None
 
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = self.mt5.symbol_info(symbol)
@@ -732,24 +724,20 @@ class TradeExecutor:
                     return {"ok": False, "reason": "spread_too_high", "symbol": symbol, "spread_points": sp, "max_spread_points": int(self.max_spread_points)}
 
         # -------------------------
-        # LOT LOGIC (fixed)
+        # LOT LOGIC
         # -------------------------
         lot_req = requested_lot
 
-        # 1) Fixed lot override (checkbox)
+        # 1) Minimum-lot override (checkbox). Use the broker specification for
+        # every symbol rather than maintaining synthetic-index-specific values.
         if self.force_symbol_fixed_lot:
-            fixed = self._fixed_lot_for_symbol(symbol)
-            if fixed is not None:
-                lot_req = float(fixed)
+            minimum = self._minimum_lot_for_symbol(symbol)
+            if minimum is not None:
+                lot_req = minimum
 
         # 2) Global minimum lot
         if self.min_allowed_lot > 0:
             lot_req = max(lot_req, float(self.min_allowed_lot))
-
-        # 3) Per-symbol minimum lot (Boom indices)
-        min_lot = self._min_allowed_lot_for_symbol(symbol)
-        if min_lot > 0:
-            lot_req = max(lot_req, float(min_lot))
 
         lot = self._normalize_volume(symbol, lot_req)
 

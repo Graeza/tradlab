@@ -49,6 +49,7 @@ from config.settings import (
     BACKTEST_WARMUP_BARS,
     BACKTEST_OUT_DIR,
     BOOM_SYMBOLS,
+    CRASH_SYMBOLS,
     NEW_SYMBOL_STRATEGY_SYMBOLS,
 )
 
@@ -114,6 +115,7 @@ def build_strategies(
     strategies = []
     is_new_symbol = str(symbol) in set(NEW_SYMBOL_STRATEGY_SYMBOLS)
     is_boom_symbol = str(symbol) in set(BOOM_SYMBOLS)
+    is_crash_symbol = str(symbol) in set(CRASH_SYMBOLS)
 
     if is_new_symbol:
         strategies.append(RSI3MAExtremeStrategy())
@@ -214,6 +216,7 @@ def main() -> None:
     ap.add_argument("--enable-spread-filter", type=_parse_bool, default=False)
     ap.add_argument("--exec-max-spread", type=int, default=0)
     ap.add_argument("--force-fixed-lot", type=_parse_bool, default=False)
+    ap.add_argument("--minimum-lot", type=float, default=0.0, help="Broker minimum lot for the backtested symbol")
     ap.add_argument("--fixed-sl-tp", type=_parse_bool, default=False)
     ap.add_argument("--sl-tp-offset", type=float, default=0.0)
     ap.add_argument("--enable-trailing-stop", type=_parse_bool, default=False)
@@ -317,6 +320,7 @@ def main() -> None:
         max_spread_points=int(args.risk_max_spread),
         base_deviation_points=int(args.risk_base_dev),
         force_symbol_fixed_lot=bool(args.force_fixed_lot),
+        minimum_lot=float(args.minimum_lot),
         boom_crash_fixed_sl_tp=bool(args.fixed_sl_tp),
         boom_crash_sl_tp_offset=float(args.sl_tp_offset),
         enable_spread_filter=bool(args.enable_spread_filter),
@@ -384,6 +388,7 @@ def main() -> None:
             "enable_spread_filter": bool(args.enable_spread_filter),
             "exec_max_spread": int(args.exec_max_spread),
             "force_fixed_lot": bool(args.force_fixed_lot),
+            "minimum_lot": float(args.minimum_lot),
             "fixed_sl_tp": bool(args.fixed_sl_tp),
             "sl_tp_offset": float(args.sl_tp_offset),
             "enable_trailing_stop": bool(args.enable_trailing_stop),
