@@ -35,7 +35,7 @@ def _bb_width(df: pd.DataFrame, period: int = 20, stdev: float = 2.0) -> float:
     last_ma = float(ma.iloc[-1])
     if last_ma == 0.0 or np.isnan(last_ma):
         return float("nan")
-    return float((upper.iloc[-1] - lower.iloc[-1]) / last_ma)
+    return float((upper.iloc[-1] - lower.iloc[-1]) / abs(last_ma))
 
 
 def _wick_exhaustion(last: pd.Series, wick_to_body: float = 2.0) -> Tuple[bool, Dict[str, Any]]:
@@ -209,8 +209,8 @@ class BoomSpikeTrendStrategy(Strategy):
         last = float(m5_close.iloc[-1])
         prev = float(m5_close.iloc[-2])
 
-        impulse_down_pct = (prev > 0) and ((prev - last) / prev >= self.impulse_pct)
-        impulse_up_pct = (prev > 0) and ((last - prev) / prev >= self.impulse_pct)
+        impulse_down_pct = (prev != 0) and ((prev - last) / abs(prev) >= self.impulse_pct)
+        impulse_up_pct = (prev != 0) and ((last - prev) / abs(prev) >= self.impulse_pct)
 
         atr_m5 = _atr(m5, 14)
         impulse_down_atr = (not np.isnan(atr_m5)) and ((prev - last) >= self.impulse_atr_mult * float(atr_m5))

@@ -11,22 +11,33 @@ def _project_path(*parts: str) -> str:
     return os.path.join(PROJECT_ROOT, *parts)
 
 # --- Trading universe ---
-SYMBOL_LIST = [
+BOOM_SYMBOLS = [
     "Boom 1000 Index",
     "Boom 900 Index",
     "Boom 500 Index",
     "Boom 600 Index",
     "Boom 300 Index",
-    "Wall Street 30",
-    "XAUUSD",
 ]
 
-# Symbols added outside the Boom synthetic universe use a dedicated daily
-# RSI(3)/RSI-MA(3) strategy instead of the Boom-focused strategy stack.
+# Crash synthetic indices use directional mirrors of the Boom-specific
+# strategies. Keeping separate symbol groups prevents either directional stack
+# from running against the wrong family of indices.
+CRASH_SYMBOLS = [
+    "Crash 1000 Index",
+    "Crash 900 Index",
+    "Crash 500 Index",
+    "Crash 600 Index",
+    "Crash 300 Index",
+]
+
+# Symbols added outside the Boom/Crash synthetic universe use a dedicated daily
+# RSI(3)/RSI-MA(3) strategy instead of the synthetic-focused strategy stack.
 NEW_SYMBOL_STRATEGY_SYMBOLS = [
     "Wall Street 30",
     "XAUUSD",
 ]
+
+SYMBOL_LIST = BOOM_SYMBOLS + CRASH_SYMBOLS + NEW_SYMBOL_STRATEGY_SYMBOLS
 
 TIMEFRAME_LIST = [
     mt5.TIMEFRAME_M5,
@@ -77,6 +88,8 @@ STRATEGY_WEIGHTS = {
     "ML": 1.2,
     "BOOM_SPIKE_TREND": 1.3,
     "BOOM_SELL_DECAY": 1.45,
+    "CRASH_SPIKE_TREND": 1.3,
+    "CRASH_BUY_RECOVERY": 1.45,
     "RSI3_MA_EXTREME": 1.0,
 }
 
@@ -153,6 +166,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.05,
         "BOOM_SELL_DECAY": 1.10,
+        "CRASH_SPIKE_TREND": 1.05,
+        "CRASH_BUY_RECOVERY": 1.10,
     },
     "RANGE": {
         "RSI_EMA": 1.3,
@@ -160,6 +175,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.10,
         "BOOM_SELL_DECAY": 0.90,
+        "CRASH_SPIKE_TREND": 1.10,
+        "CRASH_BUY_RECOVERY": 0.90,
     },
 
     # Volatility
@@ -169,6 +186,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 0.85,
         "BOOM_SELL_DECAY": 1.15,
+        "CRASH_SPIKE_TREND": 0.85,
+        "CRASH_BUY_RECOVERY": 1.15,
     },
     "LOW_VOL": {
         "RSI_EMA": 1.1,
@@ -176,5 +195,7 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.25,
         "BOOM_SELL_DECAY": 1.05,
+        "CRASH_SPIKE_TREND": 1.25,
+        "CRASH_BUY_RECOVERY": 1.05,
     },
 }
