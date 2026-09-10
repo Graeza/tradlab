@@ -48,6 +48,8 @@ from config.settings import (
     BACKTEST_STARTING_CASH,
     BACKTEST_WARMUP_BARS,
     BACKTEST_OUT_DIR,
+    BOOM_SYMBOLS,
+    CRASH_SYMBOLS,
     NEW_SYMBOL_STRATEGY_SYMBOLS,
 )
 
@@ -59,6 +61,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.crash_spike_trend import CrashSpikeTrendStrategy, CrashBuyRecoveryStrategy
 from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 
 from backtest.data_source import load_bars_from_db
@@ -105,10 +108,14 @@ def build_strategies(
     use_ml: bool = USE_ML_STRATEGY,
     use_boom: bool = True,
     use_boom_sell: bool = True,
+    use_crash: bool = True,
+    use_crash_buy: bool = True,
     ml_model_path: str | None = None,
 ):
     strategies = []
     is_new_symbol = str(symbol) in set(NEW_SYMBOL_STRATEGY_SYMBOLS)
+    is_boom_symbol = str(symbol) in set(BOOM_SYMBOLS)
+    is_crash_symbol = str(symbol) in set(CRASH_SYMBOLS)
 
     if is_new_symbol:
         strategies.append(RSI3MAExtremeStrategy())
@@ -119,11 +126,17 @@ def build_strategies(
         if use_breakout:
             strategies.append(BreakoutStrategy())
 
-        if use_boom:
+        if is_boom_symbol and use_boom:
             strategies.append(BoomSpikeTrendStrategy())
 
-        if use_boom_sell:
+        if is_boom_symbol and use_boom_sell:
             strategies.append(BoomSellDecayStrategy())
+
+        if is_crash_symbol and use_crash:
+            strategies.append(CrashSpikeTrendStrategy())
+
+        if is_crash_symbol and use_crash_buy:
+            strategies.append(CrashBuyRecoveryStrategy())
 
     chosen_ml_path = str(ml_model_path or "").strip() or None
 
@@ -175,6 +188,10 @@ def main() -> None:
     ap.add_argument("--ensemble-min-conf", type=float, default=float(ENSEMBLE_MIN_CONF))
     ap.add_argument("--use-boom-sell", type=_parse_bool, default=True)
     ap.add_argument("--weight-boom-sell", type=float, default=1.45)
+    ap.add_argument("--use-crash", type=_parse_bool, default=True)
+    ap.add_argument("--use-crash-buy", type=_parse_bool, default=True)
+    ap.add_argument("--weight-crash", type=float, default=float(STRATEGY_WEIGHTS.get("CRASH_SPIKE_TREND", 1.3)))
+    ap.add_argument("--weight-crash-buy", type=float, default=float(STRATEGY_WEIGHTS.get("CRASH_BUY_RECOVERY", 1.45)))
 
     # Risk controls from GUI
     ap.add_argument("--risk-max-pct", type=float, default=1.0)
@@ -199,6 +216,7 @@ def main() -> None:
     ap.add_argument("--enable-spread-filter", type=_parse_bool, default=False)
     ap.add_argument("--exec-max-spread", type=int, default=0)
     ap.add_argument("--force-fixed-lot", type=_parse_bool, default=False)
+    ap.add_argument("--minimum-lot", type=float, default=0.0, help="Broker minimum lot for the backtested symbol")
     ap.add_argument("--fixed-sl-tp", type=_parse_bool, default=False)
     ap.add_argument("--sl-tp-offset", type=float, default=0.0)
     ap.add_argument("--enable-trailing-stop", type=_parse_bool, default=False)
@@ -252,6 +270,8 @@ def main() -> None:
         use_ml=bool(args.use_ml),
         use_boom=bool(args.use_boom),
         use_boom_sell=bool(args.use_boom_sell),
+        use_crash=bool(args.use_crash),
+        use_crash_buy=bool(args.use_crash_buy),
         ml_model_path=args.ml_model_path,
     )
     if not strategies:
@@ -265,6 +285,8 @@ def main() -> None:
             "ML": float(args.weight_ml),
             "BOOM_SPIKE_TREND": float(args.weight_boom),
             "BOOM_SELL_DECAY": float(args.weight_boom_sell),
+            "CRASH_SPIKE_TREND": float(args.weight_crash),
+            "CRASH_BUY_RECOVERY": float(args.weight_crash_buy),
             "RSI3_MA_EXTREME": float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)),
         },
         min_conf=float(args.ensemble_min_conf),
@@ -298,6 +320,7 @@ def main() -> None:
         max_spread_points=int(args.risk_max_spread),
         base_deviation_points=int(args.risk_base_dev),
         force_symbol_fixed_lot=bool(args.force_fixed_lot),
+        minimum_lot=float(args.minimum_lot),
         boom_crash_fixed_sl_tp=bool(args.fixed_sl_tp),
         boom_crash_sl_tp_offset=float(args.sl_tp_offset),
         enable_spread_filter=bool(args.enable_spread_filter),
@@ -328,12 +351,16 @@ def main() -> None:
             "use_ml": bool(args.use_ml),
             "use_boom": bool(args.use_boom),
             "use_boom_sell": bool(args.use_boom_sell),
+            "use_crash": bool(args.use_crash),
+            "use_crash_buy": bool(args.use_crash_buy),
             "weights": {
                 "RSI_EMA": float(args.weight_rsi),
                 "BREAKOUT": float(args.weight_breakout),
                 "ML": float(args.weight_ml),
                 "BOOM_SPIKE_TREND": float(args.weight_boom),
                 "BOOM_SELL_DECAY": float(args.weight_boom_sell),
+                "CRASH_SPIKE_TREND": float(args.weight_crash),
+                "CRASH_BUY_RECOVERY": float(args.weight_crash_buy),
             },
             "ensemble_min_conf": float(args.ensemble_min_conf),
             "ensemble_min_vote_gap": float(args.min_vote_gap),
@@ -361,6 +388,7 @@ def main() -> None:
             "enable_spread_filter": bool(args.enable_spread_filter),
             "exec_max_spread": int(args.exec_max_spread),
             "force_fixed_lot": bool(args.force_fixed_lot),
+            "minimum_lot": float(args.minimum_lot),
             "fixed_sl_tp": bool(args.fixed_sl_tp),
             "sl_tp_offset": float(args.sl_tp_offset),
             "enable_trailing_stop": bool(args.enable_trailing_stop),

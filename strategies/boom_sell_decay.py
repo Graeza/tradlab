@@ -39,7 +39,7 @@ def _bb_width(df: pd.DataFrame, period: int = 20, stdev: float = 2.0) -> float:
     last_ma = float(ma.iloc[-1])
     if last_ma == 0.0 or np.isnan(last_ma):
         return float("nan")
-    return float((upper.iloc[-1] - lower.iloc[-1]) / last_ma)
+    return float((upper.iloc[-1] - lower.iloc[-1]) / abs(last_ma))
 
 
 def _wick_metrics(last: pd.Series) -> Dict[str, float]:
@@ -225,7 +225,7 @@ class BoomSellDecayStrategy(Strategy):
         m5_last = float(m5_close.iloc[-1])
         m5_prev = float(m5_close.iloc[-2])
 
-        impulse_down_pct = (m5_prev > 0.0) and ((m5_prev - m5_last) / m5_prev >= self.impulse_pct)
+        impulse_down_pct = (m5_prev != 0.0) and ((m5_prev - m5_last) / abs(m5_prev) >= self.impulse_pct)
         impulse_down_atr = (not np.isnan(atr_m5)) and ((m5_prev - m5_last) >= self.impulse_atr_mult * float(atr_m5))
         impulse_down = bool(impulse_down_pct or impulse_down_atr)
 
