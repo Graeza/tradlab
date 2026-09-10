@@ -17,6 +17,9 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 from strategies.symbol_scoped import SymbolScopedStrategy
+from strategies.boom_spike_trend import BoomSpikeTrendStrategy
+from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.crash_spike_trend import CrashSpikeTrendStrategy, CrashBuyRecoveryStrategy
 
 from config.settings import (
     SYMBOL_LIST, BOOM_SYMBOLS, CRASH_SYMBOLS, TIMEFRAME_LIST, PRIMARY_TIMEFRAME, LOOP_SLEEP_SECONDS, NEW_SYMBOL_STRATEGY_SYMBOLS,

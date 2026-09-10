@@ -90,6 +90,8 @@ STRATEGY_WEIGHTS = {
     "ML": 1.2,
     "BOOM_SPIKE_TREND": 1.3,
     "BOOM_SELL_DECAY": 1.45,
+    "CRASH_SPIKE_TREND": 1.3,
+    "CRASH_BUY_RECOVERY": 1.45,
     "RSI3_MA_EXTREME": 1.0,
 }
 
@@ -166,6 +168,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.05,
         "BOOM_SELL_DECAY": 1.10,
+        "CRASH_SPIKE_TREND": 1.05,
+        "CRASH_BUY_RECOVERY": 1.10,
     },
     "RANGE": {
         "RSI_EMA": 1.3,
@@ -173,6 +177,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.10,
         "BOOM_SELL_DECAY": 0.90,
+        "CRASH_SPIKE_TREND": 1.10,
+        "CRASH_BUY_RECOVERY": 0.90,
     },
 
     # Volatility
@@ -182,6 +188,8 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 0.85,
         "BOOM_SELL_DECAY": 1.15,
+        "CRASH_SPIKE_TREND": 0.85,
+        "CRASH_BUY_RECOVERY": 1.15,
     },
     "LOW_VOL": {
         "RSI_EMA": 1.1,
@@ -189,5 +197,7 @@ REGIME_WEIGHT_MULTIPLIERS = {
         "ML": 1.0,
         "BOOM_SPIKE_TREND": 1.25,
         "BOOM_SELL_DECAY": 1.05,
+        "CRASH_SPIKE_TREND": 1.25,
+        "CRASH_BUY_RECOVERY": 1.05,
     },
 }

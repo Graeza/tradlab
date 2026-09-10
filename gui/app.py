@@ -37,6 +37,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.crash_spike_trend import CrashSpikeTrendStrategy, CrashBuyRecoveryStrategy
 from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 from strategies.symbol_scoped import SymbolScopedStrategy
 
@@ -425,6 +426,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_use_boom_sell = QtWidgets.QCheckBox("Enable Boom Sell Decay strategy")
         self.chk_use_boom_sell.setChecked(True)
 
+        self.chk_use_crash = QtWidgets.QCheckBox("Enable Crash Spike/Trend strategy")
+        self.chk_use_crash.setChecked(True)
+
+        self.chk_use_crash_buy = QtWidgets.QCheckBox("Enable Crash Buy Recovery strategy")
+        self.chk_use_crash_buy.setChecked(True)
+
         self.chk_use_rsi3_ma_extreme = QtWidgets.QCheckBox("Enable RSI(3)/RSI-MA Extreme strategy")
         self.chk_use_rsi3_ma_extreme.setChecked(True)
 
@@ -433,6 +440,8 @@ class MainWindow(QtWidgets.QMainWindow):
         strat_layout.addWidget(self.chk_use_ml)
         strat_layout.addWidget(self.chk_use_boom)
         strat_layout.addWidget(self.chk_use_boom_sell)
+        strat_layout.addWidget(self.chk_use_crash)
+        strat_layout.addWidget(self.chk_use_crash_buy)
         strat_layout.addWidget(self.chk_use_rsi3_ma_extreme)
 
         wgrp = QtWidgets.QGroupBox("Strategy Weights (base)")
@@ -463,6 +472,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.w_boom_sell.setSingleStep(0.1)
         self.w_boom_sell.setValue(float(STRATEGY_WEIGHTS.get("BOOM_SELL_DECAY", 1.45)))
 
+        self.w_crash = QtWidgets.QDoubleSpinBox()
+        self.w_crash.setRange(0.0, 100.0)
+        self.w_crash.setSingleStep(0.1)
+        self.w_crash.setValue(float(STRATEGY_WEIGHTS.get("CRASH_SPIKE_TREND", 1.3)))
+
+        self.w_crash_buy = QtWidgets.QDoubleSpinBox()
+        self.w_crash_buy.setRange(0.0, 100.0)
+        self.w_crash_buy.setSingleStep(0.1)
+        self.w_crash_buy.setValue(float(STRATEGY_WEIGHTS.get("CRASH_BUY_RECOVERY", 1.45)))
+
         self.w_rsi3_ma_extreme = QtWidgets.QDoubleSpinBox()
         self.w_rsi3_ma_extreme.setRange(0.0, 100.0)
         self.w_rsi3_ma_extreme.setSingleStep(0.1)
@@ -473,6 +492,8 @@ class MainWindow(QtWidgets.QMainWindow):
         wform.addRow("ML", self.w_ml)
         wform.addRow("Boom Spike/Trend", self.w_boom)
         wform.addRow("Boom Sell Decay", self.w_boom_sell)
+        wform.addRow("Crash Spike/Trend", self.w_crash)
+        wform.addRow("Crash Buy Recovery", self.w_crash_buy)
         wform.addRow("RSI(3)/RSI-MA Extreme", self.w_rsi3_ma_extreme)
         strat_layout.addWidget(wgrp)
 
@@ -1526,6 +1547,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "MLStrategy": bool(USE_ML_STRATEGY),
             "BoomSpikeTrendStrategy": True,
             "BoomSellDecayStrategy": True,
+            "CrashSpikeTrendStrategy": True,
+            "CrashBuyRecoveryStrategy": True,
             "RSI3MAExtremeStrategy": True,
         }
 
@@ -1585,6 +1608,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "MLStrategy": self.chk_use_ml.isChecked(),
             "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
             "BoomSellDecayStrategy": self.chk_use_boom_sell.isChecked(),
+            "CrashSpikeTrendStrategy": self.chk_use_crash.isChecked(),
+            "CrashBuyRecoveryStrategy": self.chk_use_crash_buy.isChecked(),
             "RSI3MAExtremeStrategy": self.chk_use_rsi3_ma_extreme.isChecked(),
         }
 
@@ -1598,6 +1623,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "ML": float(self.w_ml.value()),
             "BOOM_SPIKE_TREND": float(self.w_boom.value()),
             "BOOM_SELL_DECAY": float(self.w_boom_sell.value()),
+            "CRASH_SPIKE_TREND": float(self.w_crash.value()),
+            "CRASH_BUY_RECOVERY": float(self.w_crash_buy.value()),
             "RSI3_MA_EXTREME": float(self.w_rsi3_ma_extreme.value()),
         }
         self.ensemble.min_conf = float(self.spin_min_conf.value())
@@ -2061,11 +2088,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "--use-ml", str(self.chk_use_ml.isChecked()),
             "--use-boom", str(self.chk_use_boom.isChecked()),
             "--use-boom-sell", str(self.chk_use_boom_sell.isChecked()),
+            "--use-crash", str(self.chk_use_crash.isChecked()),
+            "--use-crash-buy", str(self.chk_use_crash_buy.isChecked()),
             "--weight-rsi", str(float(self.w_rsi.value())),
             "--weight-breakout", str(float(self.w_breakout.value())),
             "--weight-ml", str(float(self.w_ml.value())),
             "--weight-boom", str(float(self.w_boom.value())),
             "--weight-boom-sell", str(float(self.w_boom_sell.value())),
+            "--weight-crash", str(float(self.w_crash.value())),
+            "--weight-crash-buy", str(float(self.w_crash_buy.value())),
             "--risk-max-pct", str(float(self.risk_max_risk_pct.value())),
             "--risk-min-conf", str(float(self.risk_min_conf.value())),
             "--risk-sl-atr", str(float(self.risk_sl_atr.value())),
@@ -2462,6 +2493,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "MLStrategy": self.chk_use_ml.isChecked(),
                 "BoomSpikeTrendStrategy": self.chk_use_boom.isChecked(),
                 "BoomSellDecayStrategy": self.chk_use_boom_sell.isChecked(),
+                "CrashSpikeTrendStrategy": self.chk_use_crash.isChecked(),
+                "CrashBuyRecoveryStrategy": self.chk_use_crash_buy.isChecked(),
                 "RSI3MAExtremeStrategy": self.chk_use_rsi3_ma_extreme.isChecked(),
             }
 

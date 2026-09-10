@@ -60,6 +60,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ml_strategy import MLStrategy
 from strategies.boom_spike_trend import BoomSpikeTrendStrategy
 from strategies.boom_sell_decay import BoomSellDecayStrategy
+from strategies.crash_spike_trend import CrashSpikeTrendStrategy, CrashBuyRecoveryStrategy
 from strategies.rsi3_ma_extreme import RSI3MAExtremeStrategy
 
 from backtest.data_source import load_bars_from_db
@@ -106,6 +107,8 @@ def build_strategies(
     use_ml: bool = USE_ML_STRATEGY,
     use_boom: bool = True,
     use_boom_sell: bool = True,
+    use_crash: bool = True,
+    use_crash_buy: bool = True,
     ml_model_path: str | None = None,
 ):
     strategies = []
@@ -126,6 +129,12 @@ def build_strategies(
 
         if is_boom_symbol and use_boom_sell:
             strategies.append(BoomSellDecayStrategy())
+
+        if is_crash_symbol and use_crash:
+            strategies.append(CrashSpikeTrendStrategy())
+
+        if is_crash_symbol and use_crash_buy:
+            strategies.append(CrashBuyRecoveryStrategy())
 
     chosen_ml_path = str(ml_model_path or "").strip() or None
 
@@ -177,6 +186,10 @@ def main() -> None:
     ap.add_argument("--ensemble-min-conf", type=float, default=float(ENSEMBLE_MIN_CONF))
     ap.add_argument("--use-boom-sell", type=_parse_bool, default=True)
     ap.add_argument("--weight-boom-sell", type=float, default=1.45)
+    ap.add_argument("--use-crash", type=_parse_bool, default=True)
+    ap.add_argument("--use-crash-buy", type=_parse_bool, default=True)
+    ap.add_argument("--weight-crash", type=float, default=float(STRATEGY_WEIGHTS.get("CRASH_SPIKE_TREND", 1.3)))
+    ap.add_argument("--weight-crash-buy", type=float, default=float(STRATEGY_WEIGHTS.get("CRASH_BUY_RECOVERY", 1.45)))
 
     # Risk controls from GUI
     ap.add_argument("--risk-max-pct", type=float, default=1.0)
@@ -254,6 +267,8 @@ def main() -> None:
         use_ml=bool(args.use_ml),
         use_boom=bool(args.use_boom),
         use_boom_sell=bool(args.use_boom_sell),
+        use_crash=bool(args.use_crash),
+        use_crash_buy=bool(args.use_crash_buy),
         ml_model_path=args.ml_model_path,
     )
     if not strategies:
@@ -267,6 +282,8 @@ def main() -> None:
             "ML": float(args.weight_ml),
             "BOOM_SPIKE_TREND": float(args.weight_boom),
             "BOOM_SELL_DECAY": float(args.weight_boom_sell),
+            "CRASH_SPIKE_TREND": float(args.weight_crash),
+            "CRASH_BUY_RECOVERY": float(args.weight_crash_buy),
             "RSI3_MA_EXTREME": float(STRATEGY_WEIGHTS.get("RSI3_MA_EXTREME", 1.0)),
         },
         min_conf=float(args.ensemble_min_conf),
@@ -330,12 +347,16 @@ def main() -> None:
             "use_ml": bool(args.use_ml),
             "use_boom": bool(args.use_boom),
             "use_boom_sell": bool(args.use_boom_sell),
+            "use_crash": bool(args.use_crash),
+            "use_crash_buy": bool(args.use_crash_buy),
             "weights": {
                 "RSI_EMA": float(args.weight_rsi),
                 "BREAKOUT": float(args.weight_breakout),
                 "ML": float(args.weight_ml),
                 "BOOM_SPIKE_TREND": float(args.weight_boom),
                 "BOOM_SELL_DECAY": float(args.weight_boom_sell),
+                "CRASH_SPIKE_TREND": float(args.weight_crash),
+                "CRASH_BUY_RECOVERY": float(args.weight_crash_buy),
             },
             "ensemble_min_conf": float(args.ensemble_min_conf),
             "ensemble_min_vote_gap": float(args.min_vote_gap),
