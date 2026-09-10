@@ -33,8 +33,9 @@ CRASH_SYMBOLS = [
 # Symbols added outside the Boom/Crash synthetic universe use a dedicated daily
 # RSI(3)/RSI-MA(3) strategy instead of the synthetic-focused strategy stack.
 NEW_SYMBOL_STRATEGY_SYMBOLS = [
-    "Wall Street 30",
-    "XAUUSD",
+    # "Wall Street 30",
+    # "XAUUSD",
+    "Volatility 75 Index",
 ]
 
 SYMBOL_LIST = BOOM_SYMBOLS + CRASH_SYMBOLS + NEW_SYMBOL_STRATEGY_SYMBOLS
