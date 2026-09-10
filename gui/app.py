@@ -1554,7 +1554,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         synthetic_symbols = list(BOOM_SYMBOLS) + list(CRASH_SYMBOLS)
         boom_strategy_symbols = list(BOOM_SYMBOLS)
-        crash_strategy_symbols = list(CRASH_SYMBOLS)
         strategies = []
 
         if enabled.get("RSIEMAStrategy", True):
@@ -1568,12 +1567,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if enabled.get("BoomSellDecayStrategy", True):
             strategies.append(SymbolScopedStrategy(BoomSellDecayStrategy(), allowed_symbols=boom_strategy_symbols))
-
-        if enabled.get("CrashSpikeTrendStrategy", True):
-            strategies.append(SymbolScopedStrategy(CrashSpikeTrendStrategy(), allowed_symbols=crash_strategy_symbols))
-
-        if enabled.get("CrashBuyRecoveryStrategy", True):
-            strategies.append(SymbolScopedStrategy(CrashBuyRecoveryStrategy(), allowed_symbols=crash_strategy_symbols))
 
         if enabled.get("RSI3MAExtremeStrategy", True):
             strategies.append(SymbolScopedStrategy(RSI3MAExtremeStrategy(), allowed_symbols=NEW_SYMBOL_STRATEGY_SYMBOLS))

@@ -49,7 +49,6 @@ from config.settings import (
     BACKTEST_WARMUP_BARS,
     BACKTEST_OUT_DIR,
     BOOM_SYMBOLS,
-    CRASH_SYMBOLS,
     NEW_SYMBOL_STRATEGY_SYMBOLS,
 )
 
@@ -115,7 +114,6 @@ def build_strategies(
     strategies = []
     is_new_symbol = str(symbol) in set(NEW_SYMBOL_STRATEGY_SYMBOLS)
     is_boom_symbol = str(symbol) in set(BOOM_SYMBOLS)
-    is_crash_symbol = str(symbol) in set(CRASH_SYMBOLS)
 
     if is_new_symbol:
         strategies.append(RSI3MAExtremeStrategy())
