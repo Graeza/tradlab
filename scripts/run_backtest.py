@@ -99,6 +99,13 @@ def _csv_to_set(s: str) -> set[str]:
     return {x.strip() for x in str(s or "").split(",") if x.strip()}
 
 
+def _csv_to_positive_ints(s: str) -> tuple[int, ...]:
+    values = tuple(sorted({int(x.strip()) for x in str(s or "").split(",") if x.strip()}))
+    if not values or any(value <= 0 for value in values):
+        raise argparse.ArgumentTypeError("Provide one or more comma-separated positive integers")
+    return values
+
+
 def build_strategies(
     *,
     symbol: str,
@@ -210,6 +217,8 @@ def main() -> None:
     ap.add_argument("--session-end-hour", type=int, default=24)
     ap.add_argument("--allow-weekends", type=_parse_bool, default=False)
     ap.add_argument("--point-size", type=float, default=0.01, help="Price value of one spread/slippage point")
+    ap.add_argument("--signal-horizons", type=_csv_to_positive_ints, default=(1, 3, 6, 12), help="Bars after each signal to score, comma separated")
+    ap.add_argument("--signal-targets", type=_csv_to_positive_ints, default=(50, 100, 250, 500), help="Favorable point targets to report, comma separated")
     ap.add_argument("--default-spread-points", type=float, default=0.0, help="Fallback spread (points) if bar spread is unavailable")
     ap.add_argument("--slippage-points", type=float, default=0.0, help="Adverse slippage per fill (points)")
     ap.add_argument("--cancel-pending-on-session-block", type=_parse_bool, default=True, help="Drop queued entries if next open is outside allowed session")
@@ -337,6 +346,8 @@ def main() -> None:
         broker=broker,
         warmup_bars=args.warmup,
         tag=args.tag,
+        signal_horizons=args.signal_horizons,
+        signal_targets=args.signal_targets,
     )
 
     extra = {
@@ -344,6 +355,8 @@ def main() -> None:
         "primary_tf": args.primary_tf,
         "tfs": args.tfs,
         "tag": args.tag,
+        "signal_horizons": list(args.signal_horizons),
+        "signal_targets": list(args.signal_targets),
         "ml_model_path": str(args.ml_model_path),
         "strategy_settings": {
             "use_rsi": bool(args.use_rsi),
@@ -410,6 +423,8 @@ def main() -> None:
         equity_curve=res.equity_curve,
         fills=res.fills,
         strategy_outputs=res.strategy_outputs,
+        signal_results=res.signal_results,
+        signal_summary=res.signal_summary,
         metrics=res.metrics,
         extra=extra,
     )
@@ -454,6 +469,14 @@ def main() -> None:
             )
     if res.metrics.profit_factor is not None:
         print(f"Profit factor: {res.metrics.profit_factor:.2f}")
+    if not res.signal_summary.empty:
+        display_columns = [
+            "strategy", "signal", "signals", "correct_pct_1", "avg_points_1",
+            "median_mfe_points", "median_mae_points",
+        ]
+        display_columns = [column for column in display_columns if column in res.signal_summary.columns]
+        print("\n=== Signal Point Summary ===")
+        print(res.signal_summary[display_columns].to_string(index=False, float_format=lambda value: f"{value:.1f}"))
     print(f"Outputs saved to: {args.out}")
 
 

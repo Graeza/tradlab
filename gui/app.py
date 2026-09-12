@@ -953,6 +953,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bt_primary_tf.setCurrentText(str(PRIMARY_TIMEFRAME))
         bt_form.addRow("Primary TF", self.bt_primary_tf)
 
+        self.bt_signal_horizons = QtWidgets.QLineEdit("1,3,6,12")
+        self.bt_signal_horizons.setToolTip("Bars after each signal used for point scoring")
+        bt_form.addRow("Signal horizons (bars)", self.bt_signal_horizons)
+
+        self.bt_signal_targets = QtWidgets.QLineEdit("50,100,250,500")
+        self.bt_signal_targets.setToolTip("Favorable point levels included in the hit-rate summary")
+        bt_form.addRow("Point targets", self.bt_signal_targets)
+
         self.bt_use_candidate_model = QtWidgets.QCheckBox("Use candidate model path for ML backtests")
         self.bt_use_candidate_model.setChecked(False)
         bt_form.addRow("ML model override", self.bt_use_candidate_model)
@@ -2084,6 +2092,8 @@ class MainWindow(QtWidgets.QMainWindow):
             sys.executable,
             self._script_path("run_backtest.py"),
             "--primary-tf", primary_tf,
+            "--signal-horizons", self.bt_signal_horizons.text().strip(),
+            "--signal-targets", self.bt_signal_targets.text().strip(),
             "--ml-model-path", ml_model_path_for_backtest,
             "--tfs", *tfs,
             "--cash", str(BACKTEST_STARTING_CASH),
@@ -2140,9 +2150,11 @@ class MainWindow(QtWidgets.QMainWindow):
             out_dir = os.path.abspath(os.path.join(BACKTEST_OUT_DIR, self._safe_fs_name(symbol)))
             symbol_info = self.mt5.symbol_info(symbol)
             minimum_lot = float(getattr(symbol_info, "volume_min", 0.0) or 0.0)
+            point_size = float(getattr(symbol_info, "point", 0.0) or 0.01)
             cmd = list(base_cmd_common) + [
                 "--symbol", symbol,
                 "--minimum-lot", str(minimum_lot),
+                "--point-size", str(point_size),
                 "--out", out_dir,
                 "--tag", f"next_open_{self._safe_fs_name(symbol)}",
             ]
