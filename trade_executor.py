@@ -618,11 +618,13 @@ class TradeExecutor:
         for p in self._managed_positions():
             try:
                 symbol = str(getattr(p, "symbol", "") or "")
-                if "boom" not in symbol.lower():
-                    continue
-
                 side = self._position_side(p)
-                if side != "BUY":
+                symbol_family = symbol.lower()
+                is_auto_close_candidate = (
+                    ("boom" in symbol_family and side == "BUY")
+                    or ("crash" in symbol_family and side == "SELL")
+                )
+                if not is_auto_close_candidate:
                     continue
 
                 profit = float(getattr(p, "profit", 0.0) or 0.0)
