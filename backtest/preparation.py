@@ -18,7 +18,7 @@ from utils.regime import detect_regime
 REQUIRED_BAR_COLUMNS = ("time", "open", "high", "low", "close")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DataQualitySummary:
     row_count: int
     first_time_s: int | None
@@ -29,7 +29,7 @@ class DataQualitySummary:
     timeframe_seconds: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PreparedBacktestContext:
     symbol: str
     primary_tf: int
