@@ -201,26 +201,6 @@ class PerformanceTracker:
         rows.sort(key=lambda r: (r["expectancy"], r["win_rate"], r["n"]), reverse=True)
         return rows
 
-    def strategy_summary_rows(self) -> List[Dict[str, Any]]:
-        """Return the compact, non-regime table for a live trading session."""
-        with self._lock:
-            stats_final = copy.deepcopy(self.stats_final)
-            stats = copy.deepcopy(self.stats)
-
-        rows = [self._row_from_bucket("FINAL", stats_final)]
-        rows.extend(self._row_from_bucket(name, bucket) for name, bucket in stats.items())
-        rows.sort(key=lambda row: (row["expectancy"], row["win_rate"], row["n"]), reverse=True)
-        return rows
-
-    def reset(self) -> None:
-        """Start a fresh set of pending predictions and statistics."""
-        with self._lock:
-            self.pending.clear()
-            self.stats.clear()
-            self.stats_final = {"n": 0.0, "wins": 0.0, "sum_ret": 0.0, "sum_abs_ret": 0.0}
-            self.stats_by_regime.clear()
-            self.stats_final_by_regime.clear()
-
     def pending_count(self) -> int:
         """Thread-safe total pending predictions across all symbols."""
         with self._lock:
@@ -251,7 +231,6 @@ class PerformanceTracker:
             "n": int(n),
             "win_rate": win_rate,
             "avg_ret": avg_ret,
-            "avg_return": avg_ret,
             "avg_abs_ret": avg_abs,
             "expectancy": expectancy,
         }

@@ -96,11 +96,3 @@ targets in the tab, then run a backtest. Each symbol output directory contains:
 
 GUI-launched runs read the selected symbol's point size from MT5. The backtest
 also excludes higher-timeframe candles that had not closed at decision time.
-
-## Live strategy performance by session
-
-The Performance tab shows a compact live table for the final ensemble and each
-strategy. Counts, win rate, average return, and expectancy are reset when a new
-trade-journal session starts and are periodically saved to SQLite. Selecting a
-historical session in the Trade Journal displays the table saved under that
-session ID.

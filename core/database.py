@@ -4,7 +4,7 @@ import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Iterable
 
 import pandas as pd
 
@@ -204,22 +204,6 @@ class MarketDatabase:
                 strategy_name TEXT,
                 comment TEXT,
                 UNIQUE(session_id, position_id),
-                FOREIGN KEY(session_id) REFERENCES trade_sessions(id)
-            );
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS live_strategy_performance (
-                session_id INTEGER NOT NULL,
-                strategy_name TEXT NOT NULL,
-                signal_count INTEGER NOT NULL DEFAULT 0,
-                win_rate REAL NOT NULL DEFAULT 0.0,
-                avg_return REAL NOT NULL DEFAULT 0.0,
-                avg_abs_return REAL NOT NULL DEFAULT 0.0,
-                expectancy REAL NOT NULL DEFAULT 0.0,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(session_id, strategy_name),
                 FOREIGN KEY(session_id) REFERENCES trade_sessions(id)
             );
             """
@@ -640,59 +624,6 @@ class MarketDatabase:
             (int(session_id),),
         )
         return [dict(r) for r in cur.fetchall()]
-
-    def save_live_strategy_performance(
-        self,
-        session_id: int,
-        rows: Iterable[dict[str, Any]],
-    ) -> None:
-        """Upsert the compact live strategy table for a trade-journal session."""
-        updated_at = datetime.now(timezone.utc).isoformat()
-        payload = [
-            (
-                int(session_id),
-                str(row.get("name") or "UNKNOWN"),
-                int(row.get("n") or 0),
-                float(row.get("win_rate") or 0.0),
-                float(row.get("avg_return", row.get("avg_ret", 0.0)) or 0.0),
-                float(row.get("avg_abs_ret") or 0.0),
-                float(row.get("expectancy") or 0.0),
-                updated_at,
-            )
-            for row in rows
-        ]
-        if not payload:
-            return
-        self.conn.executemany(
-            """
-            INSERT INTO live_strategy_performance(
-                session_id, strategy_name, signal_count, win_rate,
-                avg_return, avg_abs_return, expectancy, updated_at
-            ) VALUES(?,?,?,?,?,?,?,?)
-            ON CONFLICT(session_id, strategy_name) DO UPDATE SET
-                signal_count=excluded.signal_count,
-                win_rate=excluded.win_rate,
-                avg_return=excluded.avg_return,
-                avg_abs_return=excluded.avg_abs_return,
-                expectancy=excluded.expectancy,
-                updated_at=excluded.updated_at
-            """,
-            payload,
-        )
-        self.conn.commit()
-
-    def list_live_strategy_performance(self, session_id: int) -> list[dict[str, Any]]:
-        cur = self.conn.execute(
-            """
-            SELECT session_id, strategy_name AS name, signal_count AS n,
-                   win_rate, avg_return, avg_abs_return, expectancy, updated_at
-            FROM live_strategy_performance
-            WHERE session_id=?
-            ORDER BY expectancy DESC, win_rate DESC, signal_count DESC, strategy_name ASC
-            """,
-            (int(session_id),),
-        )
-        return [dict(row) for row in cur.fetchall()]
 
     def get_open_event_for_position(self, session_id: int, position_id: int) -> dict[str, Any] | None:
         cur = self.conn.execute(
