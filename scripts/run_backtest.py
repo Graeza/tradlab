@@ -427,6 +427,7 @@ def main() -> None:
         signal_summary=res.signal_summary,
         metrics=res.metrics,
         extra=extra,
+        final_signals=res.final_signals,
     )
 
     log_backtest_experiment(

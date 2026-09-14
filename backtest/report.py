@@ -22,6 +22,7 @@ def save_backtest_outputs(
     signal_summary: pd.DataFrame,
     metrics: BacktestMetrics,
     extra: Optional[Dict[str, Any]] = None,
+    final_signals: Optional[pd.DataFrame] = None,
 ) -> Dict[str, str]:
     os.makedirs(out_dir, exist_ok=True)
     paths: Dict[str, str] = {}
@@ -31,6 +32,7 @@ def save_backtest_outputs(
     strategy_outputs_path = os.path.join(out_dir, "strategy_outputs.csv")
     signal_results_path = os.path.join(out_dir, "signal_results.csv")
     signal_summary_path = os.path.join(out_dir, "signal_summary.csv")
+    final_signals_path = os.path.join(out_dir, "final_signals.csv")
     metrics_path = os.path.join(out_dir, "metrics.json")
 
     equity_curve.to_csv(eq_path, index=False)
@@ -38,6 +40,8 @@ def save_backtest_outputs(
     strategy_outputs.to_csv(strategy_outputs_path, index=False)
     signal_results.to_csv(signal_results_path, index=False)
     signal_summary.to_csv(signal_summary_path, index=False)
+    if final_signals is not None:
+        final_signals.to_csv(final_signals_path, index=False)
     with open(metrics_path, "w", encoding="utf-8") as f:
         payload = {"metrics": asdict(metrics), "extra": extra or {}}
         json.dump(payload, f, indent=2)
@@ -47,6 +51,8 @@ def save_backtest_outputs(
     paths["strategy_outputs"] = strategy_outputs_path
     paths["signal_results"] = signal_results_path
     paths["signal_summary"] = signal_summary_path
+    if final_signals is not None:
+        paths["final_signals"] = final_signals_path
     paths["metrics"] = metrics_path
     return paths
 
