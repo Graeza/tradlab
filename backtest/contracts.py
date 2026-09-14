@@ -5,10 +5,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, Union
 
 
-JSONScalar = str | int | float | bool | None
+# Type aliases are evaluated at runtime even when postponed annotation
+# evaluation is enabled.  Keep ``Union`` here rather than PEP 604's ``|`` so
+# importing the package remains supported on Python 3.9.
+JSONScalar = Union[str, int, float, bool, None]
 EngineMode = Literal["legacy", "optimized", "compare"]
 DetailLevel = Literal["summary", "signals", "full"]
 DuplicatePolicy = Literal["error", "keep_first", "keep_latest"]
@@ -35,13 +38,13 @@ class RunPhase(str, Enum):
     PERSISTING = "persisting"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SymbolMetadata:
     point_size: float
     minimum_lot: float = 0.0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StrategySelection:
     name: str
     enabled: bool = True
@@ -49,13 +52,13 @@ class StrategySelection:
     parameters: Mapping[str, JSONScalar] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AnalysisConfig:
     signal_horizons: tuple[int, ...] = (1, 3, 6, 12)
     signal_targets: tuple[int, ...] = (50, 100, 250, 500)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class OutputConfig:
     root_directory: Path
     detail_level: DetailLevel = "signals"
@@ -64,7 +67,7 @@ class OutputConfig:
     retain_failed_temporary_files: bool = False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ExecutionConfig:
     max_workers: int = 1
     fail_fast: bool = False
@@ -73,7 +76,7 @@ class ExecutionConfig:
     duplicate_policy: DuplicatePolicy = "error"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class BacktestRunRequest:
     symbols: tuple[str, ...]
     timeframes: tuple[int, ...]
@@ -152,7 +155,7 @@ class BacktestRunRequest:
         return payload
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class BacktestProgress:
     run_id: str
     symbol: str
