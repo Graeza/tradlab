@@ -1,1 +1,2 @@
 prev_time,time,prev_dt,dt,delta_s,expected_s,missing_bars,first_missing_time,last_missing_time,first_missing_dt,last_missing_dt,missing_times_utc
+1789142400.0,1789185600,2026-09-11 16:00:00+00:00,2026-09-12 04:00:00+00:00,43200.0,14400,2,1789156800,1789171200,2026-09-11 20:00:00+00:00,2026-09-12 00:00:00+00:00,2026-09-11T20:00:00+00:00|2026-09-12T00:00:00+00:00
