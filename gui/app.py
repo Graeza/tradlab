@@ -894,6 +894,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_journal.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         journal_layout.addWidget(self.tbl_journal)
 
+        journal_layout.addWidget(QtWidgets.QLabel("Strategy performance for selected session"))
+        self.tbl_session_perf = QtWidgets.QTableWidget(0, 5)
+        self.tbl_session_perf.setHorizontalHeaderLabels(
+            ["Strategy", "Signals", "Win %", "Avg Ret", "Expectancy"]
+        )
+        self.tbl_session_perf.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_session_perf.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Interactive
+        )
+        journal_layout.addWidget(self.tbl_session_perf)
+
         tabs.addTab(journal_tab, "Trade Journal")
 
         # ========== TAB: Strategy Debug ==========
@@ -952,6 +963,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.bt_primary_tf.addItem(str(tf), tf)
         self.bt_primary_tf.setCurrentText(str(PRIMARY_TIMEFRAME))
         bt_form.addRow("Primary TF", self.bt_primary_tf)
+
+        self.bt_signal_horizons = QtWidgets.QLineEdit("1,3,6,12")
+        self.bt_signal_horizons.setToolTip("Bars after each signal used for point scoring")
+        bt_form.addRow("Signal horizons (bars)", self.bt_signal_horizons)
+
+        self.bt_signal_targets = QtWidgets.QLineEdit("50,100,250,500")
+        self.bt_signal_targets.setToolTip("Favorable point levels included in the hit-rate summary")
+        bt_form.addRow("Point targets", self.bt_signal_targets)
 
         self.bt_use_candidate_model = QtWidgets.QCheckBox("Use candidate model path for ML backtests")
         self.bt_use_candidate_model.setChecked(False)
@@ -2084,6 +2103,8 @@ class MainWindow(QtWidgets.QMainWindow):
             sys.executable,
             self._script_path("run_backtest.py"),
             "--primary-tf", primary_tf,
+            "--signal-horizons", self.bt_signal_horizons.text().strip(),
+            "--signal-targets", self.bt_signal_targets.text().strip(),
             "--ml-model-path", ml_model_path_for_backtest,
             "--tfs", *tfs,
             "--cash", str(BACKTEST_STARTING_CASH),
@@ -2140,9 +2161,11 @@ class MainWindow(QtWidgets.QMainWindow):
             out_dir = os.path.abspath(os.path.join(BACKTEST_OUT_DIR, self._safe_fs_name(symbol)))
             symbol_info = self.mt5.symbol_info(symbol)
             minimum_lot = float(getattr(symbol_info, "volume_min", 0.0) or 0.0)
+            point_size = float(getattr(symbol_info, "point", 0.0) or 0.01)
             cmd = list(base_cmd_common) + [
                 "--symbol", symbol,
                 "--minimum-lot", str(minimum_lot),
+                "--point-size", str(point_size),
                 "--out", out_dir,
                 "--tag", f"next_open_{self._safe_fs_name(symbol)}",
             ]
@@ -2549,6 +2572,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def start_bot(self):
         self.bot_start_time = datetime.now(timezone.utc)
         self.bot_stop_time = None
+        self.orch.perf.reset()
         try:
             self.trade_session_id = self.db.create_trade_session(self.bot_start_time)
             if hasattr(self.orch, "set_trade_session"):
@@ -2580,6 +2604,7 @@ class MainWindow(QtWidgets.QMainWindow):
         report = self._build_session_trade_report()
         if self.trade_session_id:
             try:
+                self._persist_live_strategy_performance()
                 self.db.save_session_report(self.trade_session_id, report)
                 self.log.write(f"[JOURNAL] Saved session #{self.trade_session_id} to DB")
             except Exception as e:
@@ -2999,8 +3024,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def refresh_performance(self):
-        rows = self.orch.perf.summary_rows()
-        pending_total = sum(len(v) for v in self.orch.perf.pending.values())
+        rows = self.orch.perf.strategy_summary_rows()
+        pending_total = self.orch.perf.pending_count()
         self.lbl_perf_status.setText(f"Performance: {len(rows)} strategies | pending={pending_total}")
 
         self.lbl_bot_start_time.setText(
@@ -3030,6 +3055,19 @@ class MainWindow(QtWidgets.QMainWindow):
             ]
             for c, v in enumerate(vals):
                 self.tbl_perf.setItem(r, c, QtWidgets.QTableWidgetItem(v))
+
+        self._persist_live_strategy_performance(rows)
+
+    def _persist_live_strategy_performance(self, rows=None) -> None:
+        if not self.trade_session_id:
+            return
+        compact_rows = rows if rows is not None else self.orch.perf.strategy_summary_rows()
+        try:
+            self.db.save_live_strategy_performance(self.trade_session_id, compact_rows)
+        except Exception as exc:
+            self.log.write(
+                f"[PERFORMANCE] Failed to save session #{self.trade_session_id}: {exc}"
+            )
 
     def closeEvent(self, event):
         # Ensure background bot + MT5 worker are stopped cleanly on exit.
@@ -3269,6 +3307,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_trade_journal_for_session(int(sessions[0].get("id") or 0))
         else:
             self.tbl_journal.setRowCount(0)
+            self.tbl_session_perf.setRowCount(0)
 
     @QtCore.Slot()
     def on_trade_session_selected(self):
@@ -3287,6 +3326,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def refresh_trade_journal_for_session(self, session_id: int):
         try:
             trades = self.db.list_journal_trades(session_id)
+            strategy_rows = self.db.list_live_strategy_performance(session_id)
         except Exception as e:
             self.lbl_journal_status.setText(f"Trade Journal: failed to load trades ({e})")
             return
@@ -3314,6 +3354,20 @@ class MainWindow(QtWidgets.QMainWindow):
             ]
             for c, v in enumerate(vals):
                 self.tbl_journal.setItem(r, c, QtWidgets.QTableWidgetItem(v))
+
+        self.tbl_session_perf.setRowCount(0)
+        for row in strategy_rows:
+            r = self.tbl_session_perf.rowCount()
+            self.tbl_session_perf.insertRow(r)
+            vals = [
+                str(row.get("name") or ""),
+                str(row.get("n") or 0),
+                f"{float(row.get('win_rate') or 0.0) * 100.0:.1f}%",
+                f"{float(row.get('avg_return') or 0.0):.5f}",
+                f"{float(row.get('expectancy') or 0.0):.5f}",
+            ]
+            for column, value in enumerate(vals):
+                self.tbl_session_perf.setItem(r, column, QtWidgets.QTableWidgetItem(value))
 
     def _format_duration(self, start: datetime | None, stop: datetime | None) -> str:
         if not start:
