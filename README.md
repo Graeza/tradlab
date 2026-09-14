@@ -97,6 +97,14 @@ targets in the tab, then run a backtest. Each symbol output directory contains:
 GUI-launched runs read the selected symbol's point size from MT5. The backtest
 also excludes higher-timeframe candles that had not closed at decision time.
 
+The backtest runtime now separates **preparation** from **simulation**. Use
+`backtest.contracts.BacktestRunRequest` as the validated, serializable request
+boundary and `backtest.preparation.prepare_backtest` for source-independent bar
+normalization, immutable OHLC arrays, precomputed regimes, and causal
+multi-timeframe alignment. The existing `run_backtest_next_open` entry point is
+preserved as a compatibility adapter; prepared callers can invoke
+`run_prepared_backtest` directly and provide progress/cancellation callbacks.
+
 ## Live strategy performance by session
 
 The Performance tab shows a compact live table for the final ensemble and each
