@@ -33,6 +33,10 @@ class PerformanceTracker:
       - add_prediction() at decision time
       - update_with_bars() to resolve pending once future bar exists
       - summary_rows() for GUI table
+
+    Returns measure directional price changes over the prediction horizon:
+    BUY benefits from rising prices and SELL from falling prices. They do not
+    include execution costs or realized trade P&L.
     """
 
     def __init__(self, max_pending_per_symbol: int = 2000, eps: float = 0.0):
@@ -169,7 +173,8 @@ class PerformanceTracker:
         bucket["n"] += 1.0
         if pred_sig == label_sig:
             bucket["wins"] += 1.0
-        bucket["sum_ret"] += ret
+        signal_ret = -ret if pred_sig == "SELL" else ret
+        bucket["sum_ret"] += signal_ret
         bucket["sum_abs_ret"] += abs(ret)
 
     def summary_rows(self) -> List[Dict[str, Any]]:
