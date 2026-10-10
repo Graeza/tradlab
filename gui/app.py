@@ -3037,7 +3037,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 str(row.get("name")),
                 str(row.get("n")),
                 f"{float(row.get('win_rate', 0.0) or 0.0) * 100.0:.1f}%",
-                f"{float(row.get('avg_return', 0.0) or 0.0):.5f}",
+                f"{float(row.get('avg_ret', 0.0) or 0.0):.5f}",
                 f"{float(row.get('expectancy', 0.0) or 0.0):.5f}",
             ]
             for c, v in enumerate(vals):
