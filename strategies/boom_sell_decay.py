@@ -7,6 +7,7 @@ import pandas as pd
 
 from strategies.base import Strategy, StrategyResult, Signal
 from utils.indicators import add_h1_context_to_df
+from utils.timeframes import get_timeframe
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
@@ -110,38 +111,6 @@ class BoomSellDecayStrategy(Strategy):
         self.h1_sr_buffer_atr_mult = float(h1_sr_buffer_atr_mult)
         self.use_h4_filter = bool(use_h4_filter)
 
-    def _pick_tf(self, data_by_tf: dict, tf: Optional[int]) -> Optional[pd.DataFrame]:
-        if tf is not None and tf in data_by_tf:
-            return data_by_tf[tf]
-        return None
-
-    def _infer(self, data_by_tf: dict) -> Dict[str, pd.DataFrame]:
-        items = [
-            (k, v)
-            for k, v in (data_by_tf or {}).items()
-            if isinstance(v, pd.DataFrame) and not v.empty
-        ]
-        if not items:
-            return {}
-
-        def score(item):
-            _, df = item
-            if "dt" in df.columns and len(df) >= 3:
-                try:
-                    dts = pd.to_datetime(df["dt"])
-                    med = dts.diff().dropna().dt.total_seconds().median()
-                    return float(med) if pd.notna(med) else float("inf")
-                except Exception:
-                    return float("inf")
-            return float("inf")
-
-        items_scored = sorted(items, key=score)
-        out = {}
-        labels = ["m5", "m15", "h1", "h4"]
-        for i, (_, df) in enumerate(items_scored[:4]):
-            out[labels[i]] = df
-        return out
-
     @staticmethod
     def _find_rsi(last: pd.Series) -> float:
         for c in ("RSI", "rsi"):
@@ -153,22 +122,18 @@ class BoomSellDecayStrategy(Strategy):
         if not data_by_tf:
             return StrategyResult(self.name, Signal.HOLD, 0.0, {"reason": "no_data"})
 
-        m5 = self._pick_tf(data_by_tf, self.tf_m5)
-        m15 = self._pick_tf(data_by_tf, self.tf_m15)
-        h1 = self._pick_tf(data_by_tf, self.tf_h1)
-        h4 = self._pick_tf(data_by_tf, self.tf_h4)
+        m5 = get_timeframe(data_by_tf, 5, explicit_key=self.tf_m5)
+        m15 = get_timeframe(data_by_tf, 15, explicit_key=self.tf_m15)
+        h1 = get_timeframe(data_by_tf, 60, explicit_key=self.tf_h1)
+        h4 = get_timeframe(data_by_tf, 240, explicit_key=self.tf_h4)
 
-        if m5 is None or m15 is None or h1 is None:
-            inferred = self._infer(data_by_tf)
-            m5 = m5 or inferred.get("m5")
-            m15 = m15 or inferred.get("m15")
-            h1 = h1 or inferred.get("h1")
-            h4 = h4 or inferred.get("h4")
-
-        if m5 is None or m15 is None or h1 is None:
+        if m5 is None or m15 is None or h1 is None or (self.use_h4_filter and h4 is None):
             return StrategyResult(self.name, Signal.HOLD, 0.0, {"reason": "missing_timeframes"})
 
         if len(m5) < 30 or len(m15) < 60 or len(h1) < 60:
+            return StrategyResult(self.name, Signal.HOLD, 0.0, {"reason": "insufficient_bars"})
+
+        if self.use_h4_filter and len(h4) < 60:
             return StrategyResult(self.name, Signal.HOLD, 0.0, {"reason": "insufficient_bars"})
 
         atr_col_m15 = None
@@ -236,7 +201,7 @@ class BoomSellDecayStrategy(Strategy):
         h4_ok = True
         h4_last_close = None
         h4_ema50 = None
-        if self.use_h4_filter and h4 is not None and not h4.empty and len(h4) >= 60:
+        if self.use_h4_filter:
             h4_close = h4["close"].astype(float)
             h4_last_close = float(h4_close.iloc[-1])
             h4_ema50 = float(h4_close.ewm(span=50, adjust=False).mean().iloc[-1])
