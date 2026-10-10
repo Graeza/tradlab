@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone, time as dtime
+import math
 from typing import Optional, Dict, Any
 
 
@@ -34,6 +35,7 @@ class SimBroker:
       - blocked_symbols
       - session / weekend filters
       - trailing-stop management (bar-based approximation)
+      - profit closing for Boom BUYs and Crash SELLs (at bar close)
     """
 
     def __init__(
@@ -54,6 +56,8 @@ class SimBroker:
         trailing_trigger_rr: float = 1.0,
         trailing_distance_rr: float = 0.5,
         trailing_step_rr: float = 0.10,
+        auto_close_profits: bool = False,
+        auto_close_profits_threshold: float = 0.0,
     ):
         self.starting_cash = float(starting_cash)
         self.cash = float(starting_cash)
@@ -74,6 +78,8 @@ class SimBroker:
         self.trailing_trigger_rr = float(trailing_trigger_rr)
         self.trailing_distance_rr = float(trailing_distance_rr)
         self.trailing_step_rr = max(0.0, float(trailing_step_rr))
+        self.auto_close_profits = bool(auto_close_profits)
+        self.auto_close_profits_threshold = float(auto_close_profits_threshold)
 
         self.position: Optional[Position] = None
         self.pending_order: Optional[Dict[str, Any]] = None
@@ -118,6 +124,8 @@ class SimBroker:
         sl: Optional[float] = None,
         tp: Optional[float] = None,
         reason: str = "signal",
+        *,
+        fixed_sl_tp_offset: Optional[float] = None,
     ) -> None:
         side = str(side).upper()
         if side not in ("BUY", "SELL"):
@@ -131,6 +139,7 @@ class SimBroker:
             "sl": sl,
             "tp": tp,
             "reason": reason,
+            "fixed_sl_tp_offset": fixed_sl_tp_offset,
         }
 
     def _apply_commission(self) -> None:
@@ -188,13 +197,22 @@ class SimBroker:
             spread_points=spread_points,
         )
         sl_value = float(sl) if sl is not None else None
+        tp_value = float(tp) if tp is not None else None
+        fixed_offset = float(self.pending_order.get("fixed_sl_tp_offset") or 0.0)
+        symbol_family = str(symbol).lower()
+        if fixed_offset > 0 and ("boom" in symbol_family or "crash" in symbol_family):
+            # Live fixed offsets are based on the execution price, so include
+            # entry spread/slippage before constructing equal SL/TP distances.
+            direction = 1.0 if side == "BUY" else -1.0
+            sl_value = fill_price - direction * fixed_offset
+            tp_value = fill_price + direction * fixed_offset
         self.position = Position(
             symbol=symbol,
             side=side,
             qty=qty,
             entry_price=float(fill_price),
             sl=sl_value,
-            tp=float(tp) if tp is not None else None,
+            tp=tp_value,
             anchor_sl=sl_value,
         )
         self.fills.append(Fill(time_s=time_s, symbol=symbol, side=side, qty=qty, price=float(fill_price), reason=reason))
@@ -242,6 +260,33 @@ class SimBroker:
                 return
         pos.sl = float(candidate_sl)
 
+    def _maybe_auto_close_profit(self, time_s: int, close: float, spread_points: Optional[float]) -> None:
+        if not self.auto_close_profits or self.position is None:
+            return
+        pos = self.position
+        symbol_family = pos.symbol.lower()
+        candidate = (
+            ("boom" in symbol_family and pos.side == "BUY")
+            or ("crash" in symbol_family and pos.side == "SELL")
+        )
+        if not candidate:
+            return
+
+        # MT5's floating profit is marked at bid/ask, before prospective closing
+        # slippage/commission. Keep eligibility separate from the actual fill.
+        half_spread = self._resolve_spread_points(spread_points) * self.point_size / 2.0
+        direction = 1.0 if pos.side == "BUY" else -1.0
+        close_quote = float(close) - direction * half_spread
+        profit = direction * (close_quote - pos.entry_price) * pos.qty
+        threshold = self.auto_close_profits_threshold
+        # Subtracting decimal quotes can leave a tiny positive residue at
+        # break-even. Its profit impact scales with both price and quantity.
+        tolerance = max(abs(close_quote), abs(pos.entry_price), 1.0) * abs(pos.qty) * 1e-12
+        if profit > threshold and not math.isclose(profit, threshold, rel_tol=1e-12, abs_tol=tolerance):
+            self.close_position(
+                time_s, close, reason="auto_close_profit", spread_points=spread_points,
+            )
+
     def on_bar(self, time_s: int, symbol: str, high: float, low: float, close: float, spread_points: Optional[float] = None) -> None:
         if self.position is not None and self.position.symbol == symbol:
             self._maybe_update_trailing_stop(high=float(high), low=float(low), close=float(close))
@@ -267,6 +312,8 @@ class SimBroker:
 
             if exit_price is not None:
                 self.close_position(time_s, exit_price, reason=exit_reason or "exit", spread_points=spread_points)
+            else:
+                self._maybe_auto_close_profit(time_s, float(close), spread_points)
 
         self._mark_to_market(symbol, float(close))
         self.equity_curve.append(

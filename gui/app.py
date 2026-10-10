@@ -2132,6 +2132,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "--force-fixed-lot", str(self.ex_force_fixed_lot.isChecked()),
             "--fixed-sl-tp", str(self.ex_fixed_sl_tp.isChecked()),
             "--sl-tp-offset", str(float(self.ex_sl_tp_offset.value())),
+            "--auto-close-profits", str(self.ex_auto_close_profits.isChecked()),
+            "--auto-close-profits-threshold", str(float(self.ex_auto_close_profits_threshold.value())),
             "--enable-trailing-stop", str(self.ex_enable_trailing.isChecked()),
             "--trailing-trigger-rr", str(float(self.ex_trailing_trigger_rr.value())),
             "--trailing-distance-rr", str(float(self.ex_trailing_distance_rr.value())),

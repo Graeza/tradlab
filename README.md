@@ -97,6 +97,15 @@ targets in the tab, then run a backtest. Each symbol output directory contains:
 GUI-launched runs read the selected symbol's point size from MT5. The backtest
 also excludes higher-timeframe candles that had not closed at decision time.
 
+GUI-launched backtests also use the execution panel's fixed-stop and automatic
+profit-close settings. Fixed stops place SL and TP at equal distances from the
+actual simulated fill for Boom/Crash; other stop modes use the configured reward
+ratio. Standalone runs can opt in with `--auto-close-profits true` and set
+`--auto-close-profits-threshold 0.0`. This closes only Boom BUY and Crash SELL
+positions when marked profit strictly exceeds the threshold. Backtests check at
+candle close, approximating live polling; thresholds use simulated profit units
+without MT5 contract/tick-value conversion. Run reports record these settings.
+
 The backtest runtime now separates **preparation** from **simulation**. Use
 `backtest.contracts.BacktestRunRequest` as the validated, serializable request
 boundary and `backtest.preparation.prepare_backtest` for source-independent bar

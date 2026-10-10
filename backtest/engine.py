@@ -161,7 +161,14 @@ def run_prepared_backtest(
             diagnostics["risk_rejected"] += 1
         can_open = broker.can_open_new_trade(time_s=time_s, symbol=context.symbol)
         if params is not None and can_open:
-            broker.queue_order(context.symbol, action, params.qty, params.sl, params.tp)
+            order_options = {}
+            fixed_offset = getattr(params, "fixed_sl_tp_offset", None)
+            if fixed_offset is not None:
+                order_options["fixed_sl_tp_offset"] = fixed_offset
+            broker.queue_order(
+                context.symbol, action, params.qty, params.sl, params.tp,
+                **order_options,
+            )
             diagnostics["orders_queued"] += 1
         elif params is not None:
             diagnostics["broker_blocked"] += 1
