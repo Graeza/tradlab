@@ -9,6 +9,7 @@ class BacktestRiskParams:
     qty: float
     sl: Optional[float]
     tp: Optional[float]
+    fixed_sl_tp_offset: Optional[float] = None
 
 
 class BacktestRiskManager:
@@ -86,10 +87,12 @@ class BacktestRiskManager:
         else:
             sl_dist = entry_price * self.fallback_sl_pct
 
+        fixed_offset = None
         if self.boom_crash_fixed_sl_tp:
             sym_l = str(symbol or "").lower()
             if ("boom" in sym_l or "crash" in sym_l) and float(self.boom_crash_sl_tp_offset) > 0:
                 sl_dist = float(self.boom_crash_sl_tp_offset)
+                fixed_offset = sl_dist
 
         if sl_dist <= 0:
             return None
@@ -111,11 +114,14 @@ class BacktestRiskManager:
             if self.minimum_lot > 0:
                 qty = self.minimum_lot
 
+        tp_dist = sl_dist if fixed_offset is not None else sl_dist * self.tp_rr
         if action == "BUY":
             sl = entry_price - sl_dist
-            tp = entry_price + sl_dist * self.tp_rr
+            tp = entry_price + tp_dist
         else:
             sl = entry_price + sl_dist
-            tp = entry_price - sl_dist * self.tp_rr
+            tp = entry_price - tp_dist
 
-        return BacktestRiskParams(qty=float(qty), sl=float(sl), tp=float(tp))
+        return BacktestRiskParams(
+            qty=float(qty), sl=float(sl), tp=float(tp), fixed_sl_tp_offset=fixed_offset,
+        )

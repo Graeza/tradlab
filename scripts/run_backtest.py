@@ -228,6 +228,8 @@ def main() -> None:
     ap.add_argument("--minimum-lot", type=float, default=0.0, help="Broker minimum lot for the backtested symbol")
     ap.add_argument("--fixed-sl-tp", type=_parse_bool, default=False)
     ap.add_argument("--sl-tp-offset", type=float, default=0.0)
+    ap.add_argument("--auto-close-profits", type=_parse_bool, default=False, help="Close profitable Boom BUY and Crash SELL positions at candle close")
+    ap.add_argument("--auto-close-profits-threshold", type=float, default=0.0, help="Strict marked-profit threshold in simulated profit units")
     ap.add_argument("--enable-trailing-stop", type=_parse_bool, default=False)
     ap.add_argument("--trailing-trigger-rr", type=float, default=1.0)
     ap.add_argument("--trailing-distance-rr", type=float, default=0.5)
@@ -319,6 +321,8 @@ def main() -> None:
         trailing_trigger_rr=float(args.trailing_trigger_rr),
         trailing_distance_rr=float(args.trailing_distance_rr),
         trailing_step_rr=float(args.trailing_step_rr),
+        auto_close_profits=bool(args.auto_close_profits),
+        auto_close_profits_threshold=float(args.auto_close_profits_threshold),
     )
     risk = BacktestRiskManager(
         max_risk_pct=float(args.risk_max_pct),
@@ -404,6 +408,8 @@ def main() -> None:
             "minimum_lot": float(args.minimum_lot),
             "fixed_sl_tp": bool(args.fixed_sl_tp),
             "sl_tp_offset": float(args.sl_tp_offset),
+            "auto_close_profits": bool(args.auto_close_profits),
+            "auto_close_profits_threshold": float(args.auto_close_profits_threshold),
             "enable_trailing_stop": bool(args.enable_trailing_stop),
             "trailing_trigger_rr": float(args.trailing_trigger_rr),
             "trailing_distance_rr": float(args.trailing_distance_rr),
@@ -414,6 +420,10 @@ def main() -> None:
                 "retries and retry_delay_ms are informational only in deterministic backtests",
                 "spread filters apply when spread data exists (or when default_spread_points is set)",
                 "base_deviation_points is informational only in backtests",
+                "fixed SL/TP uses equal distances around the simulated fill for Boom/Crash; otherwise the configured reward ratio applies",
+                "auto-close profits applies only to Boom BUY and Crash SELL positions with marked profit strictly greater than the threshold",
+                "auto-close profits is evaluated at candle close as an approximation of live polling",
+                "simulated profit units do not include MT5 contract/tick-value conversion",
             ],
         },
     }
